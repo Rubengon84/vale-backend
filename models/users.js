@@ -14,3 +14,4 @@ export async function createUser(user_id, user_email, user_name, user_last_names
   );
   return result.rows;
 }
+
