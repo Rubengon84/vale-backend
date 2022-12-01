@@ -1,4 +1,4 @@
-import db from "../db/connection";
+import db from "../db/connection.js";
 
 export async function upsertParticipantsRow(user_id, activity_id, role) {
   const sqlString = `INSERT INTO participants

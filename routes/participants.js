@@ -1,5 +1,5 @@
 import express from "express";
-import { upsertParticipantsRow, getActivitiesByRole } from "../models/participants";
+import { upsertParticipantsRow, getActivitiesByRole } from "../models/participants.js";
 
 const router =  express.Router();
 

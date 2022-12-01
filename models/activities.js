@@ -1,4 +1,4 @@
-import db from "../db/connection";
+import db from "../db/connection.js";
 
 export async function getAllActivities(location, type, date, user_id) {
   const result = await db.query(
