@@ -1,4 +1,4 @@
-import db from "../../connection";
+import db from "../../connection.js";
 
 const response = await db.query(`
   CREATE TABLE IF NOT EXISTS activities 
@@ -9,9 +9,8 @@ const response = await db.query(`
    max_attendees INT NOT NULL, 
    date_time timestamp NOT NULL,
    description TEXT NOT NULL,
-   activity_cost NUMBER,
-   type TEXT NOT NULL);`
-);
+   activity_cost INT,
+   type TEXT NOT NULL);`);
 
 console.log(response);
 db.end();
