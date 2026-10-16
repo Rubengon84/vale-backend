@@ -1,5 +1,6 @@
 import { query, withTransaction } from "../db/pool.js";
 import { HttpError, conflict, forbidden, notFound } from "../errors.js";
+import { imagePath } from "../images.js";
 
 // Columns returned for every activity. $1 is always the current user's id.
 const ACTIVITY_SELECT = `
@@ -19,9 +20,19 @@ const ACTIVITY_SELECT = `
       AS is_attending,
     EXISTS (SELECT 1 FROM interests i WHERE i.activity_id = a.activity_id AND i.user_id = $1)
       AS is_interested,
-    a.organiser_id = $1 AS is_organiser
+    a.organiser_id = $1 AS is_organiser,
+    (extract(epoch FROM img.updated_at) * 1000)::bigint AS image_version
   FROM activities a
-  JOIN users o ON o.user_id = a.organiser_id`;
+  JOIN users o ON o.user_id = a.organiser_id
+  LEFT JOIN activity_images img ON img.activity_id = a.activity_id`;
+
+// Replaces the internal photo version with a signed link (or null).
+function present({ image_version, ...activity }) {
+  return {
+    ...activity,
+    image_path: image_version ? imagePath(activity.id, image_version) : null,
+  };
+}
 
 const UPCOMING = "a.date_time > now()";
 
@@ -39,7 +50,7 @@ export async function listActivities(userId, { category, type, location, date } 
      LIMIT 200`,
     [userId, category ?? null, type ?? null, location ? escapeLike(location) : null, date ?? null]
   );
-  return rows;
+  return rows.map(present);
 }
 
 export async function listMyActivities(userId, role) {
@@ -51,7 +62,7 @@ export async function listMyActivities(userId, role) {
     `${ACTIVITY_SELECT} WHERE ${UPCOMING} AND ${condition} ORDER BY a.date_time`,
     [userId]
   );
-  return rows;
+  return rows.map(present);
 }
 
 export async function listInterests(userId) {
@@ -62,7 +73,7 @@ export async function listInterests(userId) {
      ORDER BY a.date_time`,
     [userId]
   );
-  return rows;
+  return rows.map(present);
 }
 
 export async function getActivity(userId, activityId, db = { query }) {
@@ -82,7 +93,7 @@ export async function getActivity(userId, activityId, db = { query }) {
      ORDER BY x.joined_at`,
     [activityId]
   );
-  return { ...rows[0], attendees };
+  return { ...present(rows[0]), attendees };
 }
 
 async function assertInFuture(db, dateTime) {

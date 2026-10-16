@@ -11,6 +11,8 @@ export const config = {
     .map((origin) => origin.trim())
     .filter(Boolean),
   trustProxy: env.TRUST_PROXY === "true",
+  // Signs the temporary links used to show activity photos.
+  imageUrlSecret: env.IMAGE_URL_SECRET,
   auth0: {
     domain: env.AUTH0_DOMAIN,
     audience: env.AUTH0_AUDIENCE,

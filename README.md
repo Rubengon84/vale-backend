@@ -80,6 +80,8 @@ errors add `details`.
 | DELETE | `/activities/:id/participants/me`   | Leave (the organiser cannot leave)                |
 | PUT    | `/activities/:id/interest`          | Mark "Me gusta"                                   |
 | DELETE | `/activities/:id/interest`          | Remove "Me gusta"                                 |
+| PUT    | `/activities/:id/image?consent=true`| Add or replace the photo (organiser only), see below |
+| DELETE | `/activities/:id/image`             | Remove the photo (organiser only)                 |
 
 Create body:
 
@@ -124,8 +126,33 @@ An activity in a response:
 }
 ```
 
-`attendees` is only included for a single activity. Other members only ever
+`image_path` is `null` when there is no photo, otherwise a temporary signed
+link (see below). `attendees` is only included for a single activity. Other members only ever
 see each other's name and photo, never email, age or hobbies.
+
+### Activity photos
+
+Upload the photo as the raw request body, not as JSON or a form:
+
+```
+PUT /activities/7/image?consent=true
+Content-Type: image/webp        (or image/jpeg, image/png, image/heic, image/avif)
+<binary image, max 5 MB>
+```
+
+- `consent=true` records that the organiser confirmed the people in the photo
+  agree to it being published. Without it the API answers `400`
+  (`consent_required`).
+- The server re-encodes every upload with [sharp](https://sharp.pixelplumbing.com/):
+  rotated upright, at most 1280 px on the longest side, WebP, and with all
+  metadata (EXIF, GPS location) removed. A phone photo ends up around
+  50–200 KB. It is stored in the `activity_images` table.
+
+Photos are shown with plain `<img>` tags, which cannot send the login token,
+so activities include an `image_path` such as
+`/activities/7/image?v=…&expires=…&sig=…`. The link is signed with
+`IMAGE_URL_SECRET`, expires after 3–6 hours, and stops working when the photo
+is replaced or removed. Prefix it with the API's base URL to display it.
 
 ### Health
 
