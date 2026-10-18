@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { containsEmail, safeDisplayName } from "./names.js";
 
 export const CATEGORIES = ["culturales", "deportes", "juegos"];
 
@@ -57,14 +58,14 @@ export const updateActivityBody = createActivityBody
 const photoUrl = z.url({ protocol: /^https$/ }).max(500);
 
 export const registerUserBody = z.object({
-  name: text(100),
+  name: text(254).transform(safeDisplayName).pipe(text(100)),
   email: z.email().max(254).optional(),
   photo_url: photoUrl.optional(),
 });
 
 export const updateUserBody = z
   .object({
-    name: text(100),
+    name: text(100).refine((name) => !containsEmail(name), "The name cannot contain an email address"),
     photo_url: photoUrl.nullable(),
     birth_year: z.coerce.number().int().min(1900).max(new Date().getFullYear()).nullable(),
     hobbies: z.string().trim().max(500).nullable(),
