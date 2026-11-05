@@ -1,6 +1,8 @@
 import { query, withTransaction } from "../db/pool.js";
 import { HttpError, conflict, notFound } from "../errors.js";
 import { imagePath } from "../images.js";
+import { inBackground } from "../background.js";
+import * as notify from "../notifications.js";
 
 // Columns returned for every activity. $1 is always the current user's id.
 const ACTIVITY_SELECT = `
@@ -191,8 +193,9 @@ export async function register(user, activityId) {
     throw new HttpError(403, "Only participants and volunteers can sign up", "forbidden");
   }
   const quota = user.role;
+  let signedUp = false;
 
-  return withTransaction(async (db) => {
+  const result = await withTransaction(async (db) => {
     const activity = await lockActivity(db, activityId);
     if (activity.status === "draft") {
       throw notFound("Activity");
@@ -219,9 +222,14 @@ export async function register(user, activityId) {
          VALUES ($1, $2, $3, $4)`,
         [activityId, user.id, quota, full ? "waiting" : "confirmed"]
       );
+      signedUp = true;
     }
     return getActivity(user, activityId, db);
   });
+  if (signedUp) {
+    inBackground(() => notify.notifyRegistration(user.id, activityId), "sign-up email");
+  }
+  return result;
 }
 
 async function removeRegistration(db, activityId, userId) {
@@ -231,20 +239,29 @@ async function removeRegistration(db, activityId, userId) {
     [activityId, userId]
   );
   if (rows[0]?.status === "confirmed") {
-    await promoteWaiting(db, activityId, rows[0].quota, placesFor(activity, rows[0].quota));
+    return promoteWaiting(db, activityId, rows[0].quota, placesFor(activity, rows[0].quota));
   }
-  return activity;
+  return [];
 }
 
+const emailPromoted = (userIds, activityId) => {
+  if (userIds.length > 0) {
+    inBackground(() => notify.notifyPromoted(userIds, activityId), "promotion email");
+  }
+};
+
 export async function unregister(user, activityId) {
-  return withTransaction(async (db) => {
+  let promoted = [];
+  const result = await withTransaction(async (db) => {
     const activity = await lockActivity(db, activityId);
     if (activity.is_past) {
       throw conflict("This activity has already happened", "activity_past");
     }
-    await removeRegistration(db, activityId, user.id);
+    promoted = await removeRegistration(db, activityId, user.id);
     return getActivity(user, activityId, db);
   });
+  emailPromoted(promoted, activityId);
+  return result;
 }
 
 // ---------- Admins ----------
@@ -264,7 +281,7 @@ const FIELDS = [
 ];
 
 export async function createActivity(admin, data) {
-  return withTransaction(async (db) => {
+  const created = await withTransaction(async (db) => {
     await assertInFuture(db, data.date_time);
     const record = { ...data, status: data.status ?? "draft" };
     const { rows } = await db.query(
@@ -275,11 +292,31 @@ export async function createActivity(admin, data) {
     );
     return getActivity(admin, rows[0].activity_id, db);
   });
+  if (created.status === "published") {
+    inBackground(() => notify.notifyPublished(created.id), "new activity email");
+  }
+  return created;
 }
 
+// The details people are told about when they change.
+const NOTIFY_FIELDS = ["date_time", "location_name", "meeting_point", "transport", "price"];
+
+const snapshot = async (db, activityId) =>
+  (
+    await db.query(
+      `SELECT status, date_time::text, location_name, meeting_point, transport, price::text
+       FROM activities WHERE activity_id = $1`,
+      [activityId]
+    )
+  ).rows[0];
+
 export async function updateActivity(admin, activityId, changes) {
-  return withTransaction(async (db) => {
+  let before;
+  let after;
+  const promoted = [];
+  const result = await withTransaction(async (db) => {
     const activity = await lockActivity(db, activityId);
+    before = await snapshot(db, activityId);
     if (changes.date_time) {
       await assertInFuture(db, changes.date_time);
     }
@@ -302,16 +339,36 @@ export async function updateActivity(admin, activityId, changes) {
        WHERE activity_id = $1`,
       [activityId, ...fields.map((field) => changes[field])]
     );
+    after = await snapshot(db, activityId);
+    if (after.date_time !== before.date_time) {
+      // A new date gets a new reminder.
+      await db.query("UPDATE activities SET reminder_sent_at = NULL WHERE activity_id = $1", [
+        activityId,
+      ]);
+    }
 
     // More places: the waiting list moves up straight away.
     for (const quota of ["participant", "volunteer"]) {
       const places = changes[`${quota}_places`];
       if (places !== undefined && places > placesFor(activity, quota)) {
-        await promoteWaiting(db, activityId, quota, places);
+        promoted.push(...(await promoteWaiting(db, activityId, quota, places)));
       }
     }
     return getActivity(admin, activityId, db);
   });
+
+  if (before.status !== "published" && after.status === "published") {
+    inBackground(() => notify.notifyPublished(activityId), "new activity email");
+  } else if (before.status !== "cancelled" && after.status === "cancelled") {
+    inBackground(() => notify.notifyCancelled(activityId), "cancellation email");
+  } else if (after.status === "published") {
+    const changed = NOTIFY_FIELDS.filter((field) => before[field] !== after[field]);
+    if (changed.length > 0) {
+      inBackground(() => notify.notifyChanged(activityId, changed), "change email");
+    }
+  }
+  emailPromoted(promoted, activityId);
+  return result;
 }
 
 export async function deleteActivity(activityId) {
@@ -341,5 +398,6 @@ export async function listRegistrations(activityId) {
 }
 
 export async function removeRegistrationByAdmin(activityId, userId) {
-  await withTransaction((db) => removeRegistration(db, activityId, userId));
+  const promoted = await withTransaction((db) => removeRegistration(db, activityId, userId));
+  emailPromoted(promoted, activityId);
 }

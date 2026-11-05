@@ -2,10 +2,10 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
 import { pool } from "../src/db/pool.js";
 import { safeDisplayName } from "../src/names.js";
-import { as, registerUser, resetData } from "./helpers.js";
+import { as, registerUser, resetData, closeDatabase } from "./helpers.js";
 
 beforeEach(resetData);
-afterAll(() => pool.end());
+afterAll(closeDatabase);
 
 describe("safeDisplayName", () => {
   it.each([

@@ -2,6 +2,7 @@ import request from "supertest";
 import { createApp } from "../src/app.js";
 import { pool } from "../src/db/pool.js";
 import { HttpError } from "../src/errors.js";
+import { flushBackground } from "../src/background.js";
 
 // Stands in for Auth0: the user id comes from a test-only header.
 function fakeAuth(req, res, next) {
@@ -28,7 +29,7 @@ export function as(userId) {
 }
 
 export async function resetData() {
-  await pool.query("TRUNCATE users, activities, registrations, ideas RESTART IDENTITY CASCADE");
+  await pool.query("TRUNCATE users, activities, registrations, ideas, chat_messages RESTART IDENTITY CASCADE");
 }
 
 export async function registerUser(userId, name = userId) {
@@ -70,4 +71,10 @@ export const validActivity = (overrides = {}) => ({
 export async function createActivity(adminId, overrides) {
   const res = await as(adminId).post("/activities").send(validActivity(overrides)).expect(201);
   return res.body.activity;
+}
+
+// Waits for background work (emails) before closing the database.
+export async function closeDatabase() {
+  await flushBackground();
+  await pool.end();
 }

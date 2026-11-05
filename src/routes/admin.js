@@ -2,7 +2,10 @@ import { Router } from "express";
 import * as users from "../models/users.js";
 import * as activities from "../models/activities.js";
 import * as ideas from "../models/ideas.js";
+import * as chats from "../models/chats.js";
 import {
+  chatMessageUpdateBody,
+  chatReportsQuery,
   adminIdeasQuery,
   adminUserUpdateBody,
   adminUsersQuery,
@@ -49,6 +52,24 @@ router.patch("/ideas/:id", async (req, res) => {
   const { id } = idParam.parse(req.params);
   const changes = reviewIdeaBody.parse(req.body);
   res.json({ idea: await ideas.reviewIdea(req.user, id, changes) });
+});
+
+// Chat moderation
+router.get("/chat-reports", async (req, res) => {
+  const filters = chatReportsQuery.parse(req.query);
+  res.json({ reports: await chats.listReports(filters) });
+});
+
+router.patch("/chat-reports/:id", async (req, res) => {
+  const { id } = idParam.parse(req.params);
+  await chats.resolveReport(req.user, id);
+  res.status(204).end();
+});
+
+router.patch("/chat-messages/:id", async (req, res) => {
+  const { id } = idParam.parse(req.params);
+  const { hidden } = chatMessageUpdateBody.parse(req.body);
+  res.json({ message: await chats.setMessageHidden(req.user, id, hidden) });
 });
 
 export default router;
