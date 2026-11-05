@@ -12,6 +12,8 @@ import activitiesRouter from "./routes/activities.js";
 import { imagesRouter, publicActivityImagesRouter } from "./routes/images.js";
 import adminRouter from "./routes/admin.js";
 import ideasRouter, { publicIdeaImagesRouter } from "./routes/ideas.js";
+import chatsRouter from "./routes/chats.js";
+import internalRouter from "./routes/internal.js";
 
 // `authenticate` can be replaced in tests; in the app it verifies Auth0 tokens.
 export function createApp({ authenticate = jwtAuth() } = {}) {
@@ -34,6 +36,7 @@ export function createApp({ authenticate = jwtAuth() } = {}) {
   app.use(express.json({ limit: "20kb" }));
 
   app.use("/health", healthRouter);
+  app.use("/internal", internalRouter);
   app.use("/activities", publicActivityImagesRouter);
   app.use("/ideas", publicIdeaImagesRouter);
 
@@ -41,6 +44,7 @@ export function createApp({ authenticate = jwtAuth() } = {}) {
   app.use("/users", usersRouter);
   app.use("/activities", loadUser, requireApproved, imagesRouter, activitiesRouter);
   app.use("/ideas", loadUser, requireApproved, ideasRouter);
+  app.use("/chats", loadUser, requireApproved, chatsRouter);
   app.use("/admin", loadUser, requireApproved, requireAdmin, adminRouter);
 
   app.use(notFoundHandler);

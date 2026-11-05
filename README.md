@@ -85,7 +85,7 @@ errors add `details`.
 | ------ | ----------------------- | --- | ----------- |
 | PUT    | `/users/me`             | anyone logged in | Register on first login (`201`, pending), or refresh the email (`200`). Body: `name`, `email?`, `photo_url?` |
 | GET    | `/users/me`             | any account | Your profile, including `role` and `status` |
-| PATCH  | `/users/me`             | any account | Update `name`, `photo_url`, `birth_year`, `hobbies` |
+| PATCH  | `/users/me`             | any account | Update `name`, `photo_url`, `birth_year`, `hobbies`, `email_notifications` |
 | DELETE | `/users/me`             | any account | Delete your account and sign-ups (activities you created stay) |
 | GET    | `/users/me/activities`  | approved | "Mis planes": upcoming activities you have a place in or are waiting for, including cancelled ones |
 
@@ -209,11 +209,14 @@ once it is published.
 | Method | Path | Description |
 | ------ | ---- | ----------- |
 | GET    | `/admin/users?status=pending` | Accounts, pending first. `status` is optional |
-| PATCH  | `/admin/users/:userId` | Set `role` and/or `status` (`pending`, `approved`, `blocked`). You cannot change your own |
+| PATCH  | `/admin/users/:userId` | Set `role`, `status` (`pending`, `approved`, `blocked`) and/or `chat_muted` (pause their chat messages). You cannot change your own |
 | GET    | `/admin/activities/:id/registrations` | Everyone signed up, by quota, in order, with email |
 | DELETE | `/admin/activities/:id/registrations/:userId` | Remove someone; the waiting list moves up |
 | GET    | `/admin/ideas?status=received` | All ideas, new ones first. `status` is optional |
 | PATCH  | `/admin/ideas/:id` | Review: `status`, `response` (a reply for the author), `activity_id` (or `null`) |
+| GET    | `/admin/chat-reports?status=open` | Reported messages (`open` or `all`), with the message, its author and who reported it |
+| PATCH  | `/admin/chat-reports/:id` | Mark a report as reviewed |
+| PATCH  | `/admin/chat-messages/:id` | `{ hidden: true }` hides a message from members (or `false` to show it again) |
 
 ### Activity photos
 
@@ -238,6 +241,69 @@ so activities include an `image_path` such as
 `/activities/7/image?v=…&expires=…&sig=…`. The link is signed with
 `IMAGE_URL_SECRET`, expires after 3–6 hours, and stops working when the photo
 is replaced or removed. Prefix it with the API's base URL to display it.
+
+### Chats ("Comunidad")
+
+| Method | Path | Who | Description |
+| ------ | ---- | --- | ----------- |
+| GET    | `/chats` | approved | `{ rooms, rules_accepted, muted }`: the rooms I can use |
+| POST   | `/chats/rules` | approved | Accept the chat rules (needed once before writing) |
+| GET    | `/chats/:room/messages` | room members | Latest 50; `?before=<id>` for older ones; `?after=<id>` for new ones only |
+| POST   | `/chats/:room/messages` | room members | Send `{ body }` (text and emoji, max 1000 characters, max 10 per minute) |
+| DELETE | `/chats/messages/:id` | author | Delete my own message |
+| POST   | `/chats/messages/:id/report` | room members | Report a message, with an optional `reason` |
+
+Rooms: `community` (everyone), `participants` and `volunteers` (that group
+plus the VALE team). The front end checks for new messages every few
+seconds with `?after=`. Messages older than 12 months are deleted
+automatically. Members see hidden messages as `{ hidden: true, body: null }`.
+
+Errors (`403`): `chat_rules_required`, `chat_muted` (the team paused the
+person's messages); (`429`): `chat_too_fast`.
+
+### Emails
+
+Sent with [Resend](https://resend.com), one email per person, in easy-read
+Spanish, only to approved accounts that have not turned them off
+(`email_notifications` in `PATCH /users/me`):
+
+| When | To whom |
+| ---- | ------- |
+| An activity is published | Participants (and volunteers, if it has volunteer places) |
+| Someone signs up | That person: "Tienes plaza" or their waiting-list position |
+| A place is freed or added | People moved up from the waiting list |
+| Date, time, place, meeting point, transport or price change | Everyone signed up |
+| An activity is cancelled | Everyone signed up |
+| The day before | People with a place (a reminder) |
+| An account is approved | That person |
+| The team answers an idea | Its author |
+
+Emails are sent in the background: a failure is logged and never breaks the
+request. Without `RESEND_API_KEY` they are only logged.
+
+**Setting up Resend**
+
+1. Create an account at resend.com and an API key ("Sending access" is
+   enough). Put it in `RESEND_API_KEY`.
+2. To email everyone, verify a domain the association owns (Resend →
+   Domains) and set `EMAIL_FROM`, e.g. `VALE Conecta <avisos@example.org>`.
+   Until then, `onboarding@resend.dev` only delivers to your own Resend
+   account's address, which is enough for testing.
+3. Set `APP_URL` to the front end's address, for the links in emails.
+4. Check Resend's free plan limits (they apply per day and per month); a
+   new activity emails every member.
+
+### Regular tasks (reminders, chat clean-up)
+
+The server runs them when it starts and every hour while it is awake. On
+hosting plans where the server sleeps (Render's free plan), also set
+`CRON_SECRET` and create a free hourly job at e.g. cron-job.org:
+
+- URL: `https://<your-api>/internal/jobs`, method `POST`
+- Header: `Authorization: Bearer <CRON_SECRET>`
+
+It answers `{ "reminders": 0, "deleted_messages": 0 }`, and also wakes the
+server up.
 
 ### Health
 

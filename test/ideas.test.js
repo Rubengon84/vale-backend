@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
 import sharp from "sharp";
 import { pool } from "../src/db/pool.js";
-import { app, approvedUser, as, createActivity, registerUser, resetData } from "./helpers.js";
+import { app, approvedUser, as, createActivity, registerUser, resetData, closeDatabase } from "./helpers.js";
 
 beforeEach(async () => {
   await resetData();
@@ -11,7 +11,7 @@ beforeEach(async () => {
   await approvedUser("auth0|ben", "participant", "Ben");
   await approvedUser("auth0|vera", "volunteer", "Vera");
 });
-afterAll(() => pool.end());
+afterAll(closeDatabase);
 
 const propose = (userId, body = { title: "Ir a un concierto" }) =>
   as(userId).post("/ideas").send(body);

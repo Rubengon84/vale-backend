@@ -1,7 +1,10 @@
 import { query } from "../db/pool.js";
 import { HttpError, notFound } from "../errors.js";
+import { inBackground } from "../background.js";
+import { notifyAccountApproved } from "../notifications.js";
 
-const USER_COLUMNS = "user_id AS id, name, email, photo_url, birth_year, hobbies, role, status";
+const USER_COLUMNS = `user_id AS id, name, email, photo_url, birth_year, hobbies, role, status,
+  email_notifications, chat_muted_at IS NOT NULL AS chat_muted`;
 
 // Creates the profile on first login. Later calls only refresh the email, so
 // changes the user made in the app (name, photo) are kept.
@@ -26,7 +29,7 @@ export async function getUser(userId) {
   return rows[0];
 }
 
-const UPDATABLE_FIELDS = ["name", "photo_url", "birth_year", "hobbies"];
+const UPDATABLE_FIELDS = ["name", "photo_url", "birth_year", "hobbies", "email_notifications"];
 
 export async function updateUser(userId, changes) {
   const fields = UPDATABLE_FIELDS.filter((field) => changes[field] !== undefined);
@@ -63,20 +66,30 @@ export async function listUsers({ status } = {}) {
   return rows;
 }
 
-export async function updateUserAccess(admin, userId, { role, status }) {
+export async function updateUserAccess(admin, userId, { role, status, chat_muted }) {
   // An admin cannot lock themselves out by mistake.
   if (userId === admin.id) {
     throw new HttpError(409, "You cannot change your own role or status", "cannot_change_self");
   }
+  const { rows: previous } = await query("SELECT status FROM users WHERE user_id = $1", [userId]);
   const { rows } = await query(
     `UPDATE users
-     SET role = COALESCE($2, role), status = COALESCE($3, status), updated_at = now()
+     SET role = COALESCE($2, role),
+         status = COALESCE($3, status),
+         chat_muted_at = CASE
+           WHEN $4::boolean IS NULL THEN chat_muted_at
+           WHEN $4 THEN COALESCE(chat_muted_at, now())
+         END,
+         updated_at = now()
      WHERE user_id = $1
      RETURNING ${USER_COLUMNS}`,
-    [userId, role ?? null, status ?? null]
+    [userId, role ?? null, status ?? null, chat_muted ?? null]
   );
   if (rows.length === 0) {
     throw notFound("User");
+  }
+  if (previous[0]?.status !== "approved" && rows[0].status === "approved") {
+    inBackground(() => notifyAccountApproved(userId), "account approved email");
   }
   return rows[0];
 }
