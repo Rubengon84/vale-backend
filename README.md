@@ -25,6 +25,7 @@ npm run dev               # http://localhost:4000
 | `npm run db:migrate` | Apply pending files in `src/db/migrations/`          |
 | `npm run db:seed`    | Replace all data with sample data (dev only)         |
 | `npm run db:reset`   | Drop everything and re-run migrations (dev only)     |
+| `npm run make-admin -- <email>` | Make an existing account an approved admin |
 | `npm test`           | Run the tests (needs a test database, see below)     |
 | `npm run lint`       | Lint                                                 |
 
@@ -50,6 +51,28 @@ Set-up in Auth0:
 After logging in, the front end calls `PUT /users/me` to create the profile.
 Until then other endpoints answer `403` with code `registration_required`.
 
+## Roles and account approval
+
+| Role          | Can do |
+| ------------- | ------ |
+| `participant` | See the programme, sign up in the participant quota, "Mis planes" |
+| `volunteer`   | See the programme, sign up in the volunteer quota, "Mis planes" |
+| `admin`       | Everything above except signing up, plus manage the programme, photos, sign-ups and accounts |
+
+New accounts start as `participant` with status `pending`. While pending they
+can only read, edit or delete their own profile; everything else answers
+`403` with code `account_pending`. An admin approves them and sets the role
+(`PATCH /admin/users/:userId`). Blocked accounts get `account_blocked`.
+
+**The first admin:** log in to the app once (so the account exists), then:
+
+```bash
+npm run make-admin -- someone@example.org
+```
+
+On Render, run it from the service's **Shell** tab, or from your computer with
+`DATABASE_URL` pointing at the production database.
+
 ## API
 
 Responses are JSON. Errors look like
@@ -58,77 +81,139 @@ errors add `details`.
 
 ### Users
 
-| Method | Path                    | Description                                                  |
-| ------ | ----------------------- | ------------------------------------------------------------ |
-| PUT    | `/users/me`             | Register on first login (`201`), or refresh the email (`200`). Body: `name`, `email?`, `photo_url?` |
-| GET    | `/users/me`             | Your profile                                                 |
-| PATCH  | `/users/me`             | Update `name`, `photo_url`, `birth_year`, `hobbies`          |
-| DELETE | `/users/me`             | Delete your account, your activities and your sign-ups       |
-| GET    | `/users/me/activities`  | Your upcoming activities. `?role=attending` (default) or `organiser` |
-| GET    | `/users/me/interests`   | Upcoming activities you marked "Me gusta"                    |
+| Method | Path                    | Who | Description |
+| ------ | ----------------------- | --- | ----------- |
+| PUT    | `/users/me`             | anyone logged in | Register on first login (`201`, pending), or refresh the email (`200`). Body: `name`, `email?`, `photo_url?` |
+| GET    | `/users/me`             | any account | Your profile, including `role` and `status` |
+| PATCH  | `/users/me`             | any account | Update `name`, `photo_url`, `birth_year`, `hobbies` |
+| DELETE | `/users/me`             | any account | Delete your account and sign-ups (activities you created stay) |
+| GET    | `/users/me/activities`  | approved | "Mis planes": upcoming activities you have a place in or are waiting for, including cancelled ones |
 
 ### Activities
 
-| Method | Path                                | Description                                       |
-| ------ | ----------------------------------- | ------------------------------------------------- |
-| GET    | `/activities`                       | Upcoming activities. Filters: `category`, `type`, `location`, `date` (YYYY-MM-DD) |
-| POST   | `/activities`                       | Create (`201`). You become the first attendee      |
-| GET    | `/activities/:id`                   | One activity, with the people going               |
-| PATCH  | `/activities/:id`                   | Edit (organiser only)                             |
-| DELETE | `/activities/:id`                   | Cancel (organiser only)                           |
-| PUT    | `/activities/:id/participants/me`   | Join. `409` if full (`activity_full`) or past (`activity_past`) |
-| DELETE | `/activities/:id/participants/me`   | Leave (the organiser cannot leave)                |
-| PUT    | `/activities/:id/interest`          | Mark "Me gusta"                                   |
-| DELETE | `/activities/:id/interest`          | Remove "Me gusta"                                 |
-| PUT    | `/activities/:id/image?consent=true`| Add or replace the photo (organiser only), see below |
-| DELETE | `/activities/:id/image`             | Remove the photo (organiser only)                 |
+| Method | Path                                 | Who | Description |
+| ------ | ------------------------------------ | --- | ----------- |
+| GET    | `/activities`                        | approved | `?month=YYYY-MM` for a whole month (calendar), otherwise upcoming. Optional `category`. Members see published and cancelled; admins also see drafts |
+| GET    | `/activities/:id`                    | approved | One activity, with who is going |
+| PUT    | `/activities/:id/registration`       | participants, volunteers | Sign up in the quota for your role, or join its waiting list when full |
+| DELETE | `/activities/:id/registration`       | participants, volunteers | Give up your place or leave the waiting list. A freed place goes to the first person waiting |
+| POST   | `/activities`                        | admins | Create (`201`) |
+| PATCH  | `/activities/:id`                    | admins | Edit any field, including `status`. More places move the waiting list up |
+| DELETE | `/activities/:id`                    | admins | Delete (prefer `status: "cancelled"` once published) |
+| PUT    | `/activities/:id/image?consent=true` | admins | Add or replace the photo, see below |
+| DELETE | `/activities/:id/image`              | admins | Remove the photo |
 
 Create body:
 
 ```json
 {
-  "title": "Ruta del Mamut",
-  "category": "deportes",
-  "type": "walk",
-  "location_name": "Plaza Nueva, Granada",
-  "date_time": "2026-11-21T10:00",
-  "description": "Ruta fácil por el campo.",
-  "max_attendees": 12,
-  "cost": null
+  "title": "Cine en Granada",
+  "category": "culturales",
+  "description": "Vamos juntos al cine. Después tomamos algo.",
+  "date_time": "2026-11-07T17:00",
+  "location_name": "Cines Kinépolis, Pulianas",
+  "meeting_point": "Puerta del cine, 16:45",
+  "transport": "Autobús 9",
+  "price": 6,
+  "participant_places": 10,
+  "volunteer_places": 3,
+  "status": "published"
 }
 ```
 
 - `category`: `culturales`, `deportes` or `juegos`.
-- `type`: one of the options in the front end's form (see `src/schemas.js`).
+- `status`: `draft` (default, only admins see it), `published` or `cancelled`.
+- `price`: shown only, there are no payments. `null` or `0` means free.
+- `meeting_point` and `transport` are optional.
 - `date_time`: without an offset it is read in `APP_TIMEZONE`
   (Europe/Madrid). Responses use local time with the offset, e.g.
-  `2026-11-21T10:00:00+01:00`.
+  `2026-11-07T17:00:00+01:00`.
 
 An activity in a response:
 
 ```json
 {
   "id": 1,
-  "title": "Ruta del Mamut",
-  "category": "deportes",
-  "type": "walk",
-  "location_name": "Plaza Nueva, Granada",
-  "date_time": "2026-11-21T10:00:00+01:00",
-  "description": "Ruta fácil por el campo.",
-  "max_attendees": 12,
-  "cost": null,
-  "organiser": { "id": "auth0|123", "name": "María", "photo_url": null },
-  "attendee_count": 2,
-  "is_attending": true,
-  "is_interested": false,
-  "is_organiser": false,
-  "attendees": [{ "id": "auth0|123", "name": "María", "photo_url": null }]
+  "title": "Cine en Granada",
+  "category": "culturales",
+  "description": "Vamos juntos al cine. Después tomamos algo.",
+  "date_time": "2026-11-07T17:00:00+01:00",
+  "location_name": "Cines Kinépolis, Pulianas",
+  "meeting_point": "Puerta del cine, 16:45",
+  "transport": "Autobús 9",
+  "price": 6,
+  "status": "published",
+  "participants": { "places": 10, "confirmed": 4, "waiting": 0 },
+  "volunteers": { "places": 3, "confirmed": 1, "waiting": 0 },
+  "my_registration": { "quota": "participant", "status": "waiting", "position": 2 },
+  "image_path": null,
+  "going": {
+    "participants": [{ "id": "auth0|123", "name": "María", "photo_url": null }],
+    "volunteers": [{ "id": "auth0|456", "name": "Lucía", "photo_url": null }]
+  }
 }
 ```
 
-`image_path` is `null` when there is no photo, otherwise a temporary signed
-link (see below). `attendees` is only included for a single activity. Other members only ever
-see each other's name and photo, never email, age or hobbies.
+- `my_registration` is `null` if you have not signed up. `position` is your
+  place in the waiting list (only while `status` is `waiting`).
+- `going` (only for a single activity) lists people with a place. Members only
+  ever see each other's name and photo, never email, age or hobbies.
+- `image_path` is `null` when there is no photo, otherwise a temporary signed
+  link (see below).
+
+Sign-up errors (`409`): `activity_cancelled`, `activity_past`,
+`no_places_for_role` (e.g. a volunteer when the activity needs none).
+
+### Ideas ("Mis ideas")
+
+| Method | Path | Who | Description |
+| ------ | ---- | --- | ----------- |
+| GET    | `/ideas` | approved | My ideas, newest first, with the team's `response` |
+| GET    | `/ideas?scope=community` | approved | "Otras propuestas": reviewed ideas from other people, most wanted first |
+| POST   | `/ideas` | approved | Propose an idea (`201`). Body: `title`, `description?`, `suggested_when?` (free text, e.g. "en primavera") |
+| GET    | `/ideas/:id` | approved | One idea (if you can see it) |
+| DELETE | `/ideas/:id` | author, admins | Delete it |
+| PUT / DELETE | `/ideas/:id/interest` | approved | "Me gustaría participar" on a reviewed idea |
+| PUT / DELETE | `/ideas/:id/image?consent=true` | author, admins | Optional photo, handled like activity photos |
+
+Statuses: `received` (new), `considering` ("En estudio"), `approved`,
+`declined` ("Ahora no"). **New and declined ideas are only visible to their
+author and the team**; other members see an idea once the team marks it
+`considering` or `approved`, so nothing is shown to everyone unchecked.
+
+An idea in a response:
+
+```json
+{
+  "id": 3,
+  "title": "Ir a un concierto",
+  "description": "Me gusta mucho la música.",
+  "suggested_when": "En primavera",
+  "status": "approved",
+  "response": "¡Buena idea! Ya está en la programación.",
+  "created_at": "2026-11-05T12:00:00+01:00",
+  "author": { "id": "auth0|123", "name": "Pepe" },
+  "is_mine": false,
+  "activity": { "id": 12, "title": "Concierto en el Generalife" },
+  "interest_count": 4,
+  "i_am_interested": true,
+  "image_path": null
+}
+```
+
+`activity` is the activity that came out of the idea; members only see it
+once it is published.
+
+### Admin
+
+| Method | Path | Description |
+| ------ | ---- | ----------- |
+| GET    | `/admin/users?status=pending` | Accounts, pending first. `status` is optional |
+| PATCH  | `/admin/users/:userId` | Set `role` and/or `status` (`pending`, `approved`, `blocked`). You cannot change your own |
+| GET    | `/admin/activities/:id/registrations` | Everyone signed up, by quota, in order, with email |
+| DELETE | `/admin/activities/:id/registrations/:userId` | Remove someone; the waiting list moves up |
+| GET    | `/admin/ideas?status=received` | All ideas, new ones first. `status` is optional |
+| PATCH  | `/admin/ideas/:id` | Review: `status`, `response` (a reply for the author), `activity_id` (or `null`) |
 
 ### Activity photos
 
@@ -140,7 +225,7 @@ Content-Type: image/webp        (or image/jpeg, image/png, image/heic, image/avi
 <binary image, max 5 MB>
 ```
 
-- `consent=true` records that the organiser confirmed the people in the photo
+- `consent=true` records that the admin confirmed the people in the photo
   agree to it being published. Without it the API answers `400`
   (`consent_required`).
 - The server re-encodes every upload with [sharp](https://sharp.pixelplumbing.com/):

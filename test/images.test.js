@@ -3,12 +3,13 @@ import request from "supertest";
 import sharp from "sharp";
 import { pool } from "../src/db/pool.js";
 import { imagePath } from "../src/images.js";
-import { app, as, createActivity, registerUser, resetData } from "./helpers.js";
+import { app, approvedUser, as, createActivity, resetData } from "./helpers.js";
 
 beforeEach(async () => {
   await resetData();
-  await registerUser("auth0|ana", "Ana");
-  await registerUser("auth0|ben", "Ben");
+  // Ana is on the VALE team; Ben is a participant.
+  await approvedUser("auth0|ana", "admin", "Ana");
+  await approvedUser("auth0|ben", "participant", "Ben");
 });
 afterAll(() => pool.end());
 
@@ -76,11 +77,11 @@ describe("activity photos", () => {
     expect(res.body.code).toBe("consent_required");
   });
 
-  it("only lets the organiser add or remove the photo", async () => {
+  it("only lets the VALE team add or remove the photo", async () => {
     const activity = await createActivity("auth0|ana");
     await upload("auth0|ben", activity.id, await phonePhoto()).expect(403);
     await as("auth0|ben").delete(`/activities/${activity.id}/image`).expect(403);
-    await upload("auth0|ben", 999, await phonePhoto()).expect(404);
+    await upload("auth0|ana", 999, await phonePhoto()).expect(404);
   });
 
   it("rejects files that are not images", async () => {

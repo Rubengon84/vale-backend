@@ -50,24 +50,29 @@ if (!secret) {
 
 const LINK_WINDOW_SECONDS = 3 * 60 * 60;
 
-const sign = (activityId, version, expires) =>
-  createHmac("sha256", secret).update(`${activityId}:${version}:${expires}`).digest("base64url");
+// `kind` ("activities" or "ideas") is part of the signature, so a link for one
+// can never be reused for the other.
+const sign = (kind, id, version, expires) =>
+  createHmac("sha256", secret).update(`${kind}:${id}:${version}:${expires}`).digest("base64url");
 
 // Links expire at the end of the next 3-hour window, so the same link (and the
 // browser's cached copy) is reused for a while.
-export function imagePath(activityId, version, now = Date.now()) {
+export function signedImagePath(kind, id, version, now = Date.now()) {
   const nowSeconds = Math.floor(now / 1000);
   const expires =
     (Math.floor(nowSeconds / LINK_WINDOW_SECONDS) + 2) * LINK_WINDOW_SECONDS;
-  const signature = sign(activityId, version, expires);
-  return `/activities/${activityId}/image?v=${version}&expires=${expires}&sig=${signature}`;
+  const signature = sign(kind, id, version, expires);
+  return `/${kind}/${id}/image?v=${version}&expires=${expires}&sig=${signature}`;
 }
 
-export function verifyImageLink(activityId, { v, expires, sig }, now = Date.now()) {
+export const imagePath = (activityId, version, now) =>
+  signedImagePath("activities", activityId, version, now);
+
+export function verifyImageLink(kind, id, { v, expires, sig }, now = Date.now()) {
   if (!v || !expires || !sig || Number(expires) * 1000 < now) {
     return false;
   }
-  const expected = Buffer.from(sign(activityId, v, expires));
+  const expected = Buffer.from(sign(kind, id, v, expires));
   const given = Buffer.from(String(sig));
   return expected.length === given.length && timingSafeEqual(expected, given);
 }

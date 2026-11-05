@@ -28,11 +28,20 @@ export function as(userId) {
 }
 
 export async function resetData() {
-  await pool.query("TRUNCATE users, activities, attendees, interests RESTART IDENTITY CASCADE");
+  await pool.query("TRUNCATE users, activities, registrations, ideas RESTART IDENTITY CASCADE");
 }
 
 export async function registerUser(userId, name = userId) {
   await as(userId).put("/users/me").send({ name, email: `${name.replace(/\W/g, "")}@example.org` }).expect(201);
+}
+
+// Creates an approved account directly, as an admin would.
+export async function approvedUser(userId, role = "participant", name = userId) {
+  await registerUser(userId, name);
+  await pool.query("UPDATE users SET role = $2, status = 'approved' WHERE user_id = $1", [
+    userId,
+    role,
+  ]);
 }
 
 // A date-time string a given number of days from now, in local time.
@@ -43,17 +52,22 @@ export function daysFromNow(days, time = "18:00") {
 }
 
 export const validActivity = (overrides = {}) => ({
-  title: "Ruta del Mamut",
-  category: "deportes",
-  type: "walk",
-  location_name: "Plaza Nueva, Granada",
-  date_time: daysFromNow(7, "10:00"),
-  description: "Ruta fácil por el campo.",
-  max_attendees: 3,
+  title: "Cine en Granada",
+  category: "culturales",
+  description: "Vamos juntos al cine.",
+  date_time: daysFromNow(7, "17:00"),
+  location_name: "Cines Kinépolis",
+  meeting_point: "Puerta del cine",
+  transport: "Autobús 9",
+  price: 6,
+  participant_places: 2,
+  volunteer_places: 1,
+  status: "published",
   ...overrides,
 });
 
-export async function createActivity(userId, overrides) {
-  const res = await as(userId).post("/activities").send(validActivity(overrides)).expect(201);
+// Created by an admin (the account must exist and be an admin).
+export async function createActivity(adminId, overrides) {
+  const res = await as(adminId).post("/activities").send(validActivity(overrides)).expect(201);
   return res.body.activity;
 }
