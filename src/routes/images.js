@@ -2,6 +2,7 @@ import express, { Router } from "express";
 import { HttpError, notFound } from "../errors.js";
 import { MAX_UPLOAD_BYTES, processImage, verifyImageLink } from "../images.js";
 import * as images from "../models/images.js";
+import { requireAdmin } from "../middleware/auth.js";
 import { idParam } from "../schemas.js";
 
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "image/avif"];
@@ -37,11 +38,12 @@ publicImagesRouter.get("/:id/image", async (req, res) => {
   res.send(data);
 });
 
-// Behind login: only the organiser can add, replace or remove the photo.
+// Behind login: only the VALE team can add, replace or remove the photo.
 export const imagesRouter = Router();
 
 imagesRouter.put(
   "/:id/image",
+  requireAdmin,
   express.raw({ type: IMAGE_TYPES, limit: MAX_UPLOAD_BYTES }),
   async (req, res) => {
     const id = activityId(req);
@@ -59,12 +61,12 @@ imagesRouter.put(
         "consent_required"
       );
     }
-    await images.saveActivityImage(req.userId, id, await processImage(req.body));
+    await images.saveActivityImage(id, await processImage(req.body));
     res.status(204).end();
   }
 );
 
-imagesRouter.delete("/:id/image", async (req, res) => {
-  await images.deleteActivityImage(req.userId, activityId(req));
+imagesRouter.delete("/:id/image", requireAdmin, async (req, res) => {
+  await images.deleteActivityImage(activityId(req));
   res.status(204).end();
 });

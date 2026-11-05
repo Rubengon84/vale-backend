@@ -2,65 +2,63 @@ import { pathToFileURL } from "node:url";
 import { config } from "../config.js";
 import { pool, withTransaction } from "./pool.js";
 
-// Sample data matching the front end's demo content, dated in the future.
+// Sample data for development and test sites, dated in the future.
 const users = [
-  { id: "seed|pepe", name: "Pepe", hobbies: "Pasear, ajedrez y pescar", birth_year: 1991 },
-  { id: "seed|maria", name: "María" },
-  { id: "seed|juan", name: "Juan" },
-  { id: "seed|marcos", name: "Marcos" },
+  { id: "seed|equipo", name: "Equipo VALE", role: "admin" },
+  { id: "seed|pepe", name: "Pepe", role: "participant", hobbies: "Pasear, ajedrez y pescar" },
+  { id: "seed|maria", name: "María", role: "participant" },
+  { id: "seed|juan", name: "Juan", role: "participant" },
+  { id: "seed|lucia", name: "Lucía", role: "volunteer" },
+  { id: "seed|marcos", name: "Marcos", role: "volunteer" },
 ];
 
 const activities = [
   {
-    organiser: "seed|pepe",
-    title: "Visita a la iglesia de San Martín",
+    title: "Cine en Granada",
     category: "culturales",
-    type: "museum",
-    location_name: "Calle San Miguel, 43, Granada",
-    days: 7,
-    time: "18:00",
-    max_attendees: 10,
+    days: 5,
+    time: "17:00",
+    location_name: "Cines Kinépolis, Pulianas",
+    meeting_point: "Puerta del cine, 16:45",
+    transport: "Autobús 9 hasta la parada Kinépolis",
+    price: 6,
+    participant_places: 10,
+    volunteer_places: 3,
     description:
-      "Visitamos la iglesia de San Martín. Una guía nos cuenta su historia. Después tomamos algo juntos.",
-    attendees: ["seed|maria", "seed|juan"],
+      "Vamos juntos al cine. Elegimos una película divertida. Después tomamos algo y hablamos de la película.",
+    participants: ["seed|pepe", "seed|maria"],
+    volunteers: ["seed|lucia"],
   },
   {
-    organiser: "seed|maria",
-    title: "Ruta del Mamut",
+    title: "Ruta por el valle",
     category: "deportes",
-    type: "walk",
-    location_name: "Plaza Nueva, Granada",
-    days: 14,
+    days: 12,
     time: "10:00",
-    max_attendees: 12,
+    location_name: "Sendero del río Monachil",
+    meeting_point: "Plaza Nueva, 9:30",
+    transport: "Vamos en furgoneta de la asociación",
+    price: 0,
+    participant_places: 2,
+    volunteer_places: 2,
     description:
-      "Hacemos una ruta andando por el campo. Es fácil y dura unas 2 horas. Trae agua y zapatillas cómodas.",
-    attendees: ["seed|marcos"],
+      "Hacemos una ruta andando junto al río. Es fácil y dura unas 2 horas. Trae agua y zapatillas cómodas.",
+    participants: ["seed|juan", "seed|maria"],
+    volunteers: ["seed|marcos"],
   },
   {
-    organiser: "seed|juan",
-    title: "Subida a la Cruz de la Atalaya",
-    category: "deportes",
-    type: "walk",
-    location_name: "Fuente de la plaza, Granada",
-    days: 21,
-    time: "09:30",
-    max_attendees: 8,
-    description:
-      "Subimos andando a la Cruz de la Atalaya. Desde arriba se ve todo el pueblo. Paramos a descansar cuando haga falta.",
-    attendees: ["seed|pepe"],
-  },
-  {
-    organiser: "seed|marcos",
     title: "Tarde de juegos de mesa",
     category: "juegos",
-    type: "other",
-    location_name: "Centro cívico, Calle Real, 12, Granada",
-    days: 28,
-    time: "17:00",
-    max_attendees: 8,
+    days: 19,
+    time: "17:30",
+    location_name: "Centro cívico, Calle Real, 12",
+    meeting_point: null,
+    transport: null,
+    price: null,
+    participant_places: 8,
+    volunteer_places: 2,
     description: "Jugamos al parchís, al dominó y a las cartas. Si no sabes jugar, te enseñamos.",
-    attendees: ["seed|pepe", "seed|juan"],
+    participants: [],
+    volunteers: [],
   },
 ];
 
@@ -70,39 +68,46 @@ export async function seed() {
   }
 
   await withTransaction(async (client) => {
-    await client.query("TRUNCATE users, activities, attendees, interests RESTART IDENTITY CASCADE");
+    await client.query("TRUNCATE users, activities, registrations RESTART IDENTITY CASCADE");
 
     for (const user of users) {
       await client.query(
-        "INSERT INTO users (user_id, name, birth_year, hobbies) VALUES ($1, $2, $3, $4)",
-        [user.id, user.name, user.birth_year ?? null, user.hobbies ?? null]
+        `INSERT INTO users (user_id, name, role, status, hobbies)
+         VALUES ($1, $2, $3, 'approved', $4)`,
+        [user.id, user.name, user.role, user.hobbies ?? null]
       );
     }
 
     for (const activity of activities) {
       const { rows } = await client.query(
         `INSERT INTO activities
-           (organiser_id, title, category, type, location_name, date_time, description, max_attendees)
-         VALUES ($1, $2, $3, $4, $5, (current_date + $6::int + $7::time)::timestamp, $8, $9)
+           (created_by, title, category, date_time, location_name, meeting_point, transport,
+            price, participant_places, volunteer_places, description, status)
+         VALUES ('seed|equipo', $1, $2, (current_date + $3::int + $4::time)::timestamp,
+                 $5, $6, $7, $8, $9, $10, $11, 'published')
          RETURNING activity_id`,
         [
-          activity.organiser,
           activity.title,
           activity.category,
-          activity.type,
-          activity.location_name,
           activity.days,
           activity.time,
+          activity.location_name,
+          activity.meeting_point,
+          activity.transport,
+          activity.price,
+          activity.participant_places,
+          activity.volunteer_places,
           activity.description,
-          activity.max_attendees,
         ]
       );
-      for (const userId of [activity.organiser, ...activity.attendees]) {
-        await client.query("INSERT INTO attendees (activity_id, user_id) VALUES ($1, $2)", [
-          rows[0].activity_id,
-          userId,
-        ]);
-      }
+      const register = (userId, quota) =>
+        client.query(
+          `INSERT INTO registrations (activity_id, user_id, quota, status)
+           VALUES ($1, $2, $3, 'confirmed')`,
+          [rows[0].activity_id, userId, quota]
+        );
+      for (const userId of activity.participants) await register(userId, "participant");
+      for (const userId of activity.volunteers) await register(userId, "volunteer");
     }
   });
   console.log(`Seeded ${users.length} users and ${activities.length} activities`);

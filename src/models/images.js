@@ -1,22 +1,20 @@
 import { query, withTransaction } from "../db/pool.js";
-import { forbidden, notFound } from "../errors.js";
+import { notFound } from "../errors.js";
 
-async function assertOrganiser(db, userId, activityId) {
-  const { rows } = await db.query(
-    "SELECT organiser_id FROM activities WHERE activity_id = $1 FOR UPDATE",
+// Only admins reach these (see routes/images.js).
+async function lockActivity(db, activityId) {
+  const { rowCount } = await db.query(
+    "SELECT 1 FROM activities WHERE activity_id = $1 FOR UPDATE",
     [activityId]
   );
-  if (rows.length === 0) {
+  if (rowCount === 0) {
     throw notFound("Activity");
-  }
-  if (rows[0].organiser_id !== userId) {
-    throw forbidden("Only the organiser can change the photo");
   }
 }
 
-export async function saveActivityImage(userId, activityId, { data, width, height }) {
+export async function saveActivityImage(activityId, { data, width, height }) {
   await withTransaction(async (db) => {
-    await assertOrganiser(db, userId, activityId);
+    await lockActivity(db, activityId);
     await db.query(
       `INSERT INTO activity_images (activity_id, data, width, height, consent_confirmed_at)
        VALUES ($1, $2, $3, $4, now())
@@ -28,9 +26,9 @@ export async function saveActivityImage(userId, activityId, { data, width, heigh
   });
 }
 
-export async function deleteActivityImage(userId, activityId) {
+export async function deleteActivityImage(activityId) {
   await withTransaction(async (db) => {
-    await assertOrganiser(db, userId, activityId);
+    await lockActivity(db, activityId);
     await db.query("DELETE FROM activity_images WHERE activity_id = $1", [activityId]);
   });
 }

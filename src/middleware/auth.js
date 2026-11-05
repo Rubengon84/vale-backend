@@ -23,13 +23,33 @@ export function currentUser(req, res, next) {
   next();
 }
 
-// Most endpoints need a profile row; the front end creates it with PUT /users/me.
-export async function requireRegisteredUser(req, res, next) {
-  const { rowCount } = await query("SELECT 1 FROM users WHERE user_id = $1", [req.userId]);
-  if (rowCount === 0) {
+// Loads the member's role and account status. Every endpoint except
+// PUT /users/me needs a profile; the front end creates it after login.
+export async function loadUser(req, res, next) {
+  const { rows } = await query("SELECT role, status FROM users WHERE user_id = $1", [req.userId]);
+  if (rows.length === 0) {
     return next(
       new HttpError(403, "Create your profile first with PUT /users/me", "registration_required")
     );
+  }
+  req.user = { id: req.userId, ...rows[0] };
+  next();
+}
+
+// New accounts wait until an admin approves them and gives them a role.
+export function requireApproved(req, res, next) {
+  if (req.user.status === "pending") {
+    return next(new HttpError(403, "Your account is waiting for approval", "account_pending"));
+  }
+  if (req.user.status === "blocked") {
+    return next(new HttpError(403, "Your account is blocked", "account_blocked"));
+  }
+  next();
+}
+
+export function requireAdmin(req, res, next) {
+  if (req.user.role !== "admin") {
+    return next(new HttpError(403, "Only the VALE team can do this", "admin_only"));
   }
   next();
 }
