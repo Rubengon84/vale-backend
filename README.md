@@ -164,6 +164,46 @@ An activity in a response:
 Sign-up errors (`409`): `activity_cancelled`, `activity_past`,
 `no_places_for_role` (e.g. a volunteer when the activity needs none).
 
+### Ideas ("Mis ideas")
+
+| Method | Path | Who | Description |
+| ------ | ---- | --- | ----------- |
+| GET    | `/ideas` | approved | My ideas, newest first, with the team's `response` |
+| GET    | `/ideas?scope=community` | approved | "Otras propuestas": reviewed ideas from other people, most wanted first |
+| POST   | `/ideas` | approved | Propose an idea (`201`). Body: `title`, `description?`, `suggested_when?` (free text, e.g. "en primavera") |
+| GET    | `/ideas/:id` | approved | One idea (if you can see it) |
+| DELETE | `/ideas/:id` | author, admins | Delete it |
+| PUT / DELETE | `/ideas/:id/interest` | approved | "Me gustaría participar" on a reviewed idea |
+| PUT / DELETE | `/ideas/:id/image?consent=true` | author, admins | Optional photo, handled like activity photos |
+
+Statuses: `received` (new), `considering` ("En estudio"), `approved`,
+`declined` ("Ahora no"). **New and declined ideas are only visible to their
+author and the team**; other members see an idea once the team marks it
+`considering` or `approved`, so nothing is shown to everyone unchecked.
+
+An idea in a response:
+
+```json
+{
+  "id": 3,
+  "title": "Ir a un concierto",
+  "description": "Me gusta mucho la música.",
+  "suggested_when": "En primavera",
+  "status": "approved",
+  "response": "¡Buena idea! Ya está en la programación.",
+  "created_at": "2026-11-05T12:00:00+01:00",
+  "author": { "id": "auth0|123", "name": "Pepe" },
+  "is_mine": false,
+  "activity": { "id": 12, "title": "Concierto en el Generalife" },
+  "interest_count": 4,
+  "i_am_interested": true,
+  "image_path": null
+}
+```
+
+`activity` is the activity that came out of the idea; members only see it
+once it is published.
+
 ### Admin
 
 | Method | Path | Description |
@@ -172,6 +212,8 @@ Sign-up errors (`409`): `activity_cancelled`, `activity_past`,
 | PATCH  | `/admin/users/:userId` | Set `role` and/or `status` (`pending`, `approved`, `blocked`). You cannot change your own |
 | GET    | `/admin/activities/:id/registrations` | Everyone signed up, by quota, in order, with email |
 | DELETE | `/admin/activities/:id/registrations/:userId` | Remove someone; the waiting list moves up |
+| GET    | `/admin/ideas?status=received` | All ideas, new ones first. `status` is optional |
+| PATCH  | `/admin/ideas/:id` | Review: `status`, `response` (a reply for the author), `activity_id` (or `null`) |
 
 ### Activity photos
 

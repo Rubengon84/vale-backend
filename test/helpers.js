@@ -28,7 +28,7 @@ export function as(userId) {
 }
 
 export async function resetData() {
-  await pool.query("TRUNCATE users, activities, registrations RESTART IDENTITY CASCADE");
+  await pool.query("TRUNCATE users, activities, registrations, ideas RESTART IDENTITY CASCADE");
 }
 
 export async function registerUser(userId, name = userId) {
