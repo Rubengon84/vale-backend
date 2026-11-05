@@ -9,8 +9,9 @@ import { errorHandler, notFoundHandler } from "./middleware/errors.js";
 import healthRouter from "./routes/health.js";
 import usersRouter from "./routes/users.js";
 import activitiesRouter from "./routes/activities.js";
-import { imagesRouter, publicImagesRouter } from "./routes/images.js";
+import { imagesRouter, publicActivityImagesRouter } from "./routes/images.js";
 import adminRouter from "./routes/admin.js";
+import ideasRouter, { publicIdeaImagesRouter } from "./routes/ideas.js";
 
 // `authenticate` can be replaced in tests; in the app it verifies Auth0 tokens.
 export function createApp({ authenticate = jwtAuth() } = {}) {
@@ -33,11 +34,13 @@ export function createApp({ authenticate = jwtAuth() } = {}) {
   app.use(express.json({ limit: "20kb" }));
 
   app.use("/health", healthRouter);
-  app.use("/activities", publicImagesRouter);
+  app.use("/activities", publicActivityImagesRouter);
+  app.use("/ideas", publicIdeaImagesRouter);
 
   app.use(authenticate, currentUser);
   app.use("/users", usersRouter);
   app.use("/activities", loadUser, requireApproved, imagesRouter, activitiesRouter);
+  app.use("/ideas", loadUser, requireApproved, ideasRouter);
   app.use("/admin", loadUser, requireApproved, requireAdmin, adminRouter);
 
   app.use(notFoundHandler);

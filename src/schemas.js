@@ -86,3 +86,30 @@ export const adminUserUpdateBody = z
   .refine((body) => Object.keys(body).length > 0, "Nothing to update");
 
 export const userIdParam = z.object({ userId: z.string().min(1).max(200) });
+
+// ---------- Ideas ----------
+
+export const createIdeaBody = z.object({
+  title: text(200),
+  description: optionalText(2000),
+  suggested_when: optionalText(100),
+});
+
+export const IDEA_STATUSES = ["received", "considering", "approved", "declined"];
+
+export const ideaListQuery = z.object({
+  scope: z.enum(["mine", "community"]).default("mine"),
+});
+
+export const adminIdeasQuery = z.object({
+  status: z.enum(IDEA_STATUSES).optional(),
+});
+
+export const reviewIdeaBody = z
+  .object({
+    status: z.enum(IDEA_STATUSES),
+    response: optionalText(1000),
+    activity_id: z.coerce.number().int().positive().nullable(),
+  })
+  .partial()
+  .refine((body) => Object.keys(body).length > 0, "Nothing to update");

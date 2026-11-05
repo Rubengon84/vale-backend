@@ -62,13 +62,45 @@ const activities = [
   },
 ];
 
+const ideas = [
+  {
+    author: "seed|pepe",
+    title: "Ir a un concierto",
+    description: "Me gusta mucho la música. Podemos ir a un concierto al aire libre.",
+    suggested_when: "En primavera",
+    status: "considering",
+    response: "¡Buena idea! Estamos buscando un concierto.",
+    interested: ["seed|maria", "seed|juan"],
+  },
+  {
+    author: "seed|lucia",
+    title: "Pasar un día en la playa",
+    description: "Ir en autobús a Almuñécar y comer juntos.",
+    suggested_when: "En verano",
+    status: "considering",
+    response: null,
+    interested: ["seed|pepe"],
+  },
+  {
+    author: "seed|maria",
+    title: "Taller de cocina",
+    description: null,
+    suggested_when: null,
+    status: "received",
+    response: null,
+    interested: [],
+  },
+];
+
 export async function seed() {
   if (config.env === "production") {
     throw new Error("Refusing to seed the database in production");
   }
 
   await withTransaction(async (client) => {
-    await client.query("TRUNCATE users, activities, registrations RESTART IDENTITY CASCADE");
+    await client.query(
+      "TRUNCATE users, activities, registrations, ideas RESTART IDENTITY CASCADE"
+    );
 
     for (const user of users) {
       await client.query(
@@ -110,7 +142,24 @@ export async function seed() {
       for (const userId of activity.volunteers) await register(userId, "volunteer");
     }
   });
-  console.log(`Seeded ${users.length} users and ${activities.length} activities`);
+  await withTransaction(async (client) => {
+    for (const idea of ideas) {
+      const { rows } = await client.query(
+        `INSERT INTO ideas (author_id, title, description, suggested_when, status, response)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING idea_id`,
+        [idea.author, idea.title, idea.description, idea.suggested_when, idea.status, idea.response]
+      );
+      for (const userId of idea.interested) {
+        await client.query("INSERT INTO idea_interest (idea_id, user_id) VALUES ($1, $2)", [
+          rows[0].idea_id,
+          userId,
+        ]);
+      }
+    }
+  });
+  console.log(
+    `Seeded ${users.length} users, ${activities.length} activities and ${ideas.length} ideas`
+  );
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {

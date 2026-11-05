@@ -1,7 +1,15 @@
 import { Router } from "express";
 import * as users from "../models/users.js";
 import * as activities from "../models/activities.js";
-import { adminUserUpdateBody, adminUsersQuery, idParam, userIdParam } from "../schemas.js";
+import * as ideas from "../models/ideas.js";
+import {
+  adminIdeasQuery,
+  adminUserUpdateBody,
+  adminUsersQuery,
+  idParam,
+  reviewIdeaBody,
+  userIdParam,
+} from "../schemas.js";
 
 // Everything here requires an approved admin (see app.js).
 const router = Router();
@@ -28,6 +36,19 @@ router.delete("/activities/:id/registrations/:userId", async (req, res) => {
   const { userId } = userIdParam.parse(req.params);
   await activities.removeRegistrationByAdmin(id, userId);
   res.status(204).end();
+});
+
+// Ideas inbox: new ideas first.
+router.get("/ideas", async (req, res) => {
+  const filters = adminIdeasQuery.parse(req.query);
+  res.json({ ideas: await ideas.listIdeasForAdmin(req.user, filters) });
+});
+
+// Review an idea: status, a reply for the author, and the resulting activity.
+router.patch("/ideas/:id", async (req, res) => {
+  const { id } = idParam.parse(req.params);
+  const changes = reviewIdeaBody.parse(req.body);
+  res.json({ idea: await ideas.reviewIdea(req.user, id, changes) });
 });
 
 export default router;
