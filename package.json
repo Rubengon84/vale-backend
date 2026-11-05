@@ -13,7 +13,8 @@
     "db:seed": "node --env-file-if-exists=.env src/db/seed.js",
     "db:reset": "node --env-file-if-exists=.env src/db/reset.js",
     "test": "vitest run",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "make-admin": "node --env-file-if-exists=.env src/db/make-admin.js"
   },
   "dependencies": {
     "cors": "^2.8.6",

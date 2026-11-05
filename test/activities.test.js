@@ -1,225 +1,258 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { pool } from "../src/db/pool.js";
 import {
+  approvedUser,
   as,
   createActivity,
   daysFromNow,
-  registerUser,
   resetData,
   validActivity,
 } from "./helpers.js";
 
 beforeEach(async () => {
   await resetData();
-  await registerUser("auth0|ana", "Ana");
-  await registerUser("auth0|ben", "Ben");
-  await registerUser("auth0|cai", "Cai");
+  await approvedUser("auth0|admin", "admin", "Equipo");
+  await approvedUser("auth0|ana", "participant", "Ana");
+  await approvedUser("auth0|ben", "participant", "Ben");
+  await approvedUser("auth0|cai", "participant", "Cai");
+  await approvedUser("auth0|vera", "volunteer", "Vera");
+  await approvedUser("auth0|vito", "volunteer", "Vito");
 });
 afterAll(() => pool.end());
 
-describe("POST /activities", () => {
-  it("creates an activity with the organiser as the first attendee", async () => {
-    const activity = await createActivity("auth0|ana", { date_time: daysFromNow(3, "18:30") });
+const join = (userId, id) => as(userId).put(`/activities/${id}/registration`);
+const leave = (userId, id) => as(userId).delete(`/activities/${id}/registration`);
 
+describe("managing the programme", () => {
+  it("lets admins create an activity with all its details", async () => {
+    const activity = await createActivity("auth0|admin", { price: 0 });
     expect(activity).toMatchObject({
-      title: "Ruta del Mamut",
-      category: "deportes",
-      type: "walk",
-      max_attendees: 3,
-      organiser: { id: "auth0|ana", name: "Ana", photo_url: null },
-      attendee_count: 1,
-      is_attending: true,
-      is_organiser: true,
-      attendees: [{ id: "auth0|ana", name: "Ana", photo_url: null }],
+      title: "Cine en Granada",
+      category: "culturales",
+      location_name: "Cines Kinépolis",
+      meeting_point: "Puerta del cine",
+      transport: "Autobús 9",
+      price: 0,
+      status: "published",
+      participants: { places: 2, confirmed: 0, waiting: 0 },
+      volunteers: { places: 1, confirmed: 0, waiting: 0 },
+      my_registration: null,
+      going: { participants: [], volunteers: [] },
     });
-    // Returned in local time with an explicit offset.
-    expect(activity.date_time).toMatch(
-      new RegExp(`^${daysFromNow(3, "18:30")}:00[+-]\\d{2}:\\d{2}$`)
-    );
   });
 
-  it("never exposes other members' email addresses", async () => {
-    const activity = await createActivity("auth0|ana");
-    const res = await as("auth0|ben").get(`/activities/${activity.id}`).expect(200);
-    expect(JSON.stringify(res.body)).not.toContain("@example.org");
+  it("does not let participants or volunteers create, edit or delete activities", async () => {
+    await as("auth0|ana").post("/activities").send(validActivity()).expect(403);
+    await as("auth0|vera").post("/activities").send(validActivity()).expect(403);
+    const activity = await createActivity("auth0|admin");
+    await as("auth0|ana").patch(`/activities/${activity.id}`).send({ title: "x" }).expect(403);
+    await as("auth0|ana").delete(`/activities/${activity.id}`).expect(403);
   });
 
-  it.each([
-    [{ category: "otra" }, "category"],
-    [{ type: "skydiving" }, "type"],
-    [{ max_attendees: 0 }, "max_attendees"],
-    [{ title: "   " }, "title"],
-    [{ date_time: "mañana" }, "date_time"],
-  ])("rejects invalid data %j", async (overrides, field) => {
-    const res = await as("auth0|ana")
+  it("keeps drafts hidden from members until they are published", async () => {
+    const draft = await createActivity("auth0|admin", { status: "draft" });
+    await as("auth0|ana").get(`/activities/${draft.id}`).expect(404);
+    let list = await as("auth0|ana").get("/activities").expect(200);
+    expect(list.body.activities).toHaveLength(0);
+    await join("auth0|ana", draft.id).expect(404);
+
+    const admin = await as("auth0|admin").get("/activities").expect(200);
+    expect(admin.body.activities).toHaveLength(1);
+
+    await as("auth0|admin").patch(`/activities/${draft.id}`).send({ status: "published" }).expect(200);
+    list = await as("auth0|ana").get("/activities").expect(200);
+    expect(list.body.activities.map((a) => a.id)).toEqual([draft.id]);
+  });
+
+  it("validates the activity", async () => {
+    const res = await as("auth0|admin")
       .post("/activities")
-      .send(validActivity(overrides))
+      .send(validActivity({ participant_places: -1, category: "otra", title: " " }))
       .expect(400);
-    expect(res.body.details.map((d) => d.path)).toContain(field);
-  });
-
-  it("rejects dates in the past and impossible dates", async () => {
-    const past = await as("auth0|ana")
+    expect(res.body.details.map((d) => d.path).sort()).toEqual(
+      ["category", "participant_places", "title"].sort()
+    );
+    const past = await as("auth0|admin")
       .post("/activities")
       .send(validActivity({ date_time: "2020-01-01T10:00" }))
       .expect(400);
     expect(past.body.code).toBe("date_in_past");
-
-    await as("auth0|ana")
-      .post("/activities")
-      .send(validActivity({ date_time: "2099-02-30T10:00" }))
-      .expect(400);
   });
 
-  it("returns 400 for malformed JSON", async () => {
-    await as("auth0|ana")
-      .post("/activities")
-      .set("Content-Type", "application/json")
-      .send("{not json")
-      .expect(400);
+  it("lists a whole month for the calendar", async () => {
+    const soon = await createActivity("auth0|admin", { date_time: daysFromNow(1) });
+    await createActivity("auth0|admin", { date_time: daysFromNow(70) });
+    const month = soon.date_time.slice(0, 7);
+
+    const res = await as("auth0|ana").get(`/activities?month=${month}`).expect(200);
+    expect(res.body.activities.map((a) => a.id)).toContain(soon.id);
+    expect(res.body.activities.every((a) => a.date_time.startsWith(month))).toBe(true);
+    await as("auth0|ana").get("/activities?month=2026-13").expect(400);
   });
 });
 
-describe("GET /activities", () => {
-  it("lists upcoming activities, filtered by category", async () => {
-    const walk = await createActivity("auth0|ana", { date_time: daysFromNow(2) });
-    await createActivity("auth0|ben", { category: "juegos", type: "other" });
-    await pool.query(
-      "UPDATE activities SET date_time = now() - interval '1 day' WHERE activity_id = $1",
-      [walk.id]
-    );
-    const later = await createActivity("auth0|ana", { date_time: daysFromNow(9) });
+describe("signing up", () => {
+  it("puts each person in the quota for their role", async () => {
+    const activity = await createActivity("auth0|admin");
 
-    const res = await as("auth0|cai").get("/activities?category=deportes").expect(200);
-    expect(res.body.activities.map((a) => a.id)).toEqual([later.id]);
-    expect(res.body.activities[0]).toMatchObject({ is_attending: false, attendee_count: 1 });
+    const asParticipant = await join("auth0|ana", activity.id).expect(200);
+    expect(asParticipant.body.activity.my_registration).toEqual({
+      quota: "participant",
+      status: "confirmed",
+      position: null,
+    });
+
+    const asVolunteer = await join("auth0|vera", activity.id).expect(200);
+    expect(asVolunteer.body.activity).toMatchObject({
+      my_registration: { quota: "volunteer", status: "confirmed" },
+      participants: { confirmed: 1 },
+      volunteers: { confirmed: 1 },
+      going: {
+        participants: [{ id: "auth0|ana", name: "Ana", photo_url: null }],
+        volunteers: [{ id: "auth0|vera", name: "Vera", photo_url: null }],
+      },
+    });
   });
 
-  it("filters by location without treating % as a wildcard", async () => {
-    await createActivity("auth0|ana", { location_name: "Plaza Nueva, Granada" });
-    const found = await as("auth0|ana").get("/activities?location=granada").expect(200);
-    expect(found.body.activities).toHaveLength(1);
-    const none = await as("auth0|ana").get("/activities?location=%25").expect(200);
-    expect(none.body.activities).toHaveLength(0);
+  it("uses a waiting list per quota when it is full", async () => {
+    const activity = await createActivity("auth0|admin", { participant_places: 1 });
+    await join("auth0|ana", activity.id).expect(200);
+
+    const ben = await join("auth0|ben", activity.id).expect(200);
+    expect(ben.body.activity.my_registration).toEqual({
+      quota: "participant",
+      status: "waiting",
+      position: 1,
+    });
+    const cai = await join("auth0|cai", activity.id).expect(200);
+    expect(cai.body.activity.my_registration.position).toBe(2);
+    expect(cai.body.activity.participants).toEqual({ places: 1, confirmed: 1, waiting: 2 });
+
+    // The volunteer quota is separate.
+    const vera = await join("auth0|vera", activity.id).expect(200);
+    expect(vera.body.activity.my_registration.status).toBe("confirmed");
   });
 
-  it("rejects unknown filter values", async () => {
-    await as("auth0|ana").get("/activities?category=otra").expect(400);
-  });
-});
+  it("gives a freed place to the first person waiting", async () => {
+    const activity = await createActivity("auth0|admin", { participant_places: 1 });
+    await join("auth0|ana", activity.id);
+    await join("auth0|ben", activity.id);
+    await join("auth0|cai", activity.id);
 
-describe("GET /activities/:id", () => {
-  it("returns 404 for unknown or invalid ids", async () => {
-    await as("auth0|ana").get("/activities/999").expect(404);
-    await as("auth0|ana").get("/activities/abc").expect(404);
-  });
-});
+    await leave("auth0|ana", activity.id).expect(200);
 
-describe("joining and leaving", () => {
-  it("lets people join until the activity is full", async () => {
-    const activity = await createActivity("auth0|ana", { max_attendees: 2 });
-
-    const joined = await as("auth0|ben")
-      .put(`/activities/${activity.id}/participants/me`)
-      .expect(200);
-    expect(joined.body.activity).toMatchObject({ attendee_count: 2, is_attending: true });
-
-    // Joining twice is harmless.
-    await as("auth0|ben").put(`/activities/${activity.id}/participants/me`).expect(200);
-
-    const full = await as("auth0|cai")
-      .put(`/activities/${activity.id}/participants/me`)
-      .expect(409);
-    expect(full.body.code).toBe("activity_full");
+    const ben = await as("auth0|ben").get(`/activities/${activity.id}`);
+    expect(ben.body.activity.my_registration.status).toBe("confirmed");
+    const cai = await as("auth0|cai").get(`/activities/${activity.id}`);
+    expect(cai.body.activity.my_registration).toMatchObject({ status: "waiting", position: 1 });
   });
 
-  it("never goes over capacity when people join at the same time", async () => {
-    const activity = await createActivity("auth0|ana", { max_attendees: 2 });
-    const results = await Promise.all(
-      ["auth0|ben", "auth0|cai"].map((user) =>
-        as(user).put(`/activities/${activity.id}/participants/me`)
-      )
-    );
-    expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
-  });
+  it("moves the waiting list up when an admin adds places", async () => {
+    const activity = await createActivity("auth0|admin", { participant_places: 1 });
+    await join("auth0|ana", activity.id);
+    await join("auth0|ben", activity.id);
+    await join("auth0|cai", activity.id);
 
-  it("lets attendees leave but not the organiser", async () => {
-    const activity = await createActivity("auth0|ana");
-    await as("auth0|ben").put(`/activities/${activity.id}/participants/me`).expect(200);
-
-    const left = await as("auth0|ben")
-      .delete(`/activities/${activity.id}/participants/me`)
-      .expect(200);
-    expect(left.body.activity).toMatchObject({ attendee_count: 1, is_attending: false });
-
-    await as("auth0|ana").delete(`/activities/${activity.id}/participants/me`).expect(409);
-  });
-
-  it("cannot join an activity that already happened", async () => {
-    const activity = await createActivity("auth0|ana");
-    await pool.query(
-      "UPDATE activities SET date_time = now() - interval '1 hour' WHERE activity_id = $1",
-      [activity.id]
-    );
-    const res = await as("auth0|ben")
-      .put(`/activities/${activity.id}/participants/me`)
-      .expect(409);
-    expect(res.body.code).toBe("activity_past");
-  });
-});
-
-describe("Me gusta", () => {
-  it("adds and removes interest", async () => {
-    const activity = await createActivity("auth0|ana");
-    await as("auth0|ben").put(`/activities/${activity.id}/interest`).expect(204);
-    await as("auth0|ben").put(`/activities/${activity.id}/interest`).expect(204);
-
-    let res = await as("auth0|ben").get(`/activities/${activity.id}`);
-    expect(res.body.activity.is_interested).toBe(true);
-
-    await as("auth0|ben").delete(`/activities/${activity.id}/interest`).expect(204);
-    res = await as("auth0|ben").get(`/activities/${activity.id}`);
-    expect(res.body.activity.is_interested).toBe(false);
-
-    await as("auth0|ben").put("/activities/999/interest").expect(404);
-  });
-});
-
-describe("editing and cancelling", () => {
-  it("only lets the organiser edit", async () => {
-    const activity = await createActivity("auth0|ana");
-    await as("auth0|ben").patch(`/activities/${activity.id}`).send({ title: "Hack" }).expect(403);
-
-    const res = await as("auth0|ana")
+    const res = await as("auth0|admin")
       .patch(`/activities/${activity.id}`)
-      .send({ title: "Ruta corta", cost: 2.5 })
+      .send({ participant_places: 2 })
       .expect(200);
-    expect(res.body.activity).toMatchObject({ title: "Ruta corta", cost: 2.5 });
-  });
+    expect(res.body.activity.participants).toEqual({ places: 2, confirmed: 2, waiting: 1 });
 
-  it("does not reduce capacity below the people already going", async () => {
-    const activity = await createActivity("auth0|ana", { max_attendees: 3 });
-    await as("auth0|ben").put(`/activities/${activity.id}/participants/me`).expect(200);
-
-    await as("auth0|ana")
+    await as("auth0|admin")
       .patch(`/activities/${activity.id}`)
-      .send({ max_attendees: 1 })
+      .send({ participant_places: 1 })
       .expect(409);
-    await as("auth0|ana")
-      .patch(`/activities/${activity.id}`)
-      .send({ max_attendees: 2 })
+  });
+
+  it("never overbooks when people sign up at the same time", async () => {
+    const activity = await createActivity("auth0|admin", { participant_places: 1 });
+    await Promise.all(["auth0|ana", "auth0|ben", "auth0|cai"].map((u) => join(u, activity.id)));
+    const { rows } = await pool.query(
+      "SELECT status, count(*)::int AS n FROM registrations GROUP BY status ORDER BY status"
+    );
+    expect(rows).toEqual([
+      { status: "confirmed", n: 1 },
+      { status: "waiting", n: 2 },
+    ]);
+  });
+
+  it("is harmless to sign up twice", async () => {
+    const activity = await createActivity("auth0|admin");
+    await join("auth0|ana", activity.id).expect(200);
+    const again = await join("auth0|ana", activity.id).expect(200);
+    expect(again.body.activity.participants.confirmed).toBe(1);
+  });
+
+  it("refuses sign-ups that make no sense", async () => {
+    const noVolunteers = await createActivity("auth0|admin", { volunteer_places: 0 });
+    const res = await join("auth0|vera", noVolunteers.id).expect(409);
+    expect(res.body.code).toBe("no_places_for_role");
+
+    await join("auth0|admin", noVolunteers.id).expect(403);
+
+    const cancelled = await createActivity("auth0|admin", { status: "cancelled" });
+    expect((await join("auth0|ana", cancelled.id).expect(409)).body.code).toBe(
+      "activity_cancelled"
+    );
+
+    const past = await createActivity("auth0|admin");
+    await pool.query("UPDATE activities SET date_time = now() - interval '1 hour' WHERE activity_id = $1", [past.id]);
+    expect((await join("auth0|ana", past.id).expect(409)).body.code).toBe("activity_past");
+  });
+});
+
+describe("Mis planes", () => {
+  it("lists upcoming plans, including waiting lists and cancellations", async () => {
+    const confirmed = await createActivity("auth0|admin", { date_time: daysFromNow(2) });
+    const full = await createActivity("auth0|admin", { participant_places: 1, date_time: daysFromNow(3) });
+    const toCancel = await createActivity("auth0|admin", { date_time: daysFromNow(4) });
+    await createActivity("auth0|admin", { date_time: daysFromNow(5) });
+
+    await join("auth0|ben", full.id);
+    for (const id of [confirmed.id, full.id, toCancel.id]) await join("auth0|ana", id);
+    await as("auth0|admin").patch(`/activities/${toCancel.id}`).send({ status: "cancelled" });
+
+    const res = await as("auth0|ana").get("/users/me/activities").expect(200);
+    expect(
+      res.body.activities.map((a) => [a.id, a.status, a.my_registration.status])
+    ).toEqual([
+      [confirmed.id, "published", "confirmed"],
+      [full.id, "published", "waiting"],
+      [toCancel.id, "cancelled", "confirmed"],
+    ]);
+  });
+});
+
+describe("admin view of sign-ups", () => {
+  it("lists everyone in order with contact details, and can remove someone", async () => {
+    const activity = await createActivity("auth0|admin", { participant_places: 1 });
+    await join("auth0|ana", activity.id);
+    await join("auth0|ben", activity.id);
+    await join("auth0|vera", activity.id);
+
+    const res = await as("auth0|admin")
+      .get(`/admin/activities/${activity.id}/registrations`)
       .expect(200);
+    expect(res.body.registrations.map((r) => [r.name, r.quota, r.status, r.email])).toEqual([
+      ["Ana", "participant", "confirmed", "Ana@example.org"],
+      ["Ben", "participant", "waiting", "Ben@example.org"],
+      ["Vera", "volunteer", "confirmed", "Vera@example.org"],
+    ]);
+
+    await as("auth0|admin")
+      .delete(`/admin/activities/${activity.id}/registrations/auth0|ana`)
+      .expect(204);
+    const ben = await as("auth0|ben").get(`/activities/${activity.id}`);
+    expect(ben.body.activity.my_registration.status).toBe("confirmed");
+
+    await as("auth0|ana").get(`/admin/activities/${activity.id}/registrations`).expect(403);
   });
 
-  it("rejects an empty update", async () => {
-    const activity = await createActivity("auth0|ana");
-    await as("auth0|ana").patch(`/activities/${activity.id}`).send({}).expect(400);
-  });
-
-  it("only lets the organiser cancel", async () => {
-    const activity = await createActivity("auth0|ana");
-    await as("auth0|ben").delete(`/activities/${activity.id}`).expect(403);
-    await as("auth0|ana").delete(`/activities/${activity.id}`).expect(204);
-    await as("auth0|ana").get(`/activities/${activity.id}`).expect(404);
+  it("members never see each other's email addresses", async () => {
+    const activity = await createActivity("auth0|admin");
+    await join("auth0|ana", activity.id);
+    const res = await as("auth0|ben").get(`/activities/${activity.id}`).expect(200);
+    expect(JSON.stringify(res.body)).not.toContain("@example.org");
   });
 });

@@ -1,20 +1,23 @@
 import { Router } from "express";
 import * as users from "../models/users.js";
-import { listInterests, listMyActivities } from "../models/activities.js";
-import { requireRegisteredUser } from "../middleware/auth.js";
-import { myActivitiesQuery, registerUserBody, updateUserBody } from "../schemas.js";
+import { listMyPlans } from "../models/activities.js";
+import { loadUser, requireApproved } from "../middleware/auth.js";
+import { registerUserBody, updateUserBody } from "../schemas.js";
 
 const router = Router();
 
-// Called by the front end after every login.
+// Called by the front end after every login. New accounts start as
+// participants waiting for approval.
 router.put("/me", async (req, res) => {
   const data = registerUserBody.parse(req.body);
   const { user, created } = await users.registerUser(req.userId, data);
   res.status(created ? 201 : 200).json({ user });
 });
 
-router.use(requireRegisteredUser);
+router.use(loadUser);
 
+// Available while the account is pending, so people can see their status,
+// edit their details or delete their account.
 router.get("/me", async (req, res) => {
   res.json({ user: await users.getUser(req.userId) });
 });
@@ -29,13 +32,9 @@ router.delete("/me", async (req, res) => {
   res.status(204).end();
 });
 
-router.get("/me/activities", async (req, res) => {
-  const { role } = myActivitiesQuery.parse(req.query);
-  res.json({ activities: await listMyActivities(req.userId, role) });
-});
-
-router.get("/me/interests", async (req, res) => {
-  res.json({ activities: await listInterests(req.userId) });
+// "Mis planes"
+router.get("/me/activities", requireApproved, async (req, res) => {
+  res.json({ activities: await listMyPlans(req.user) });
 });
 
 export default router;

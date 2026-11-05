@@ -1,18 +1,24 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
 import { pool } from "../src/db/pool.js";
-import { app, as, createActivity, registerUser, resetData } from "./helpers.js";
+import { makeAdmin } from "../src/db/make-admin.js";
+import { app, approvedUser, as, createActivity, registerUser, resetData } from "./helpers.js";
 
 beforeEach(resetData);
 afterAll(() => pool.end());
 
 describe("PUT /users/me", () => {
-  it("creates the profile on first login and keeps edits on later logins", async () => {
+  it("creates a pending participant on first login and keeps edits on later logins", async () => {
     const first = await as("auth0|ana")
       .put("/users/me")
       .send({ name: "Ana", email: "ana@example.org" })
       .expect(201);
-    expect(first.body.user).toMatchObject({ id: "auth0|ana", name: "Ana" });
+    expect(first.body.user).toMatchObject({
+      id: "auth0|ana",
+      name: "Ana",
+      role: "participant",
+      status: "pending",
+    });
 
     await as("auth0|ana").patch("/users/me").send({ name: "Ana María" }).expect(200);
 
@@ -26,6 +32,58 @@ describe("PUT /users/me", () => {
   it("validates the body", async () => {
     const res = await as("auth0|ana").put("/users/me").send({ email: "nope" }).expect(400);
     expect(res.body.code).toBe("validation_failed");
+  });
+});
+
+describe("account approval", () => {
+  beforeEach(() => registerUser("auth0|ana", "Ana"));
+
+  it("lets pending accounts see their profile but not the programme", async () => {
+    const me = await as("auth0|ana").get("/users/me").expect(200);
+    expect(me.body.user.status).toBe("pending");
+    const res = await as("auth0|ana").get("/activities").expect(403);
+    expect(res.body.code).toBe("account_pending");
+    await as("auth0|ana").get("/users/me/activities").expect(403);
+  });
+
+  it("lets admins approve accounts and set roles", async () => {
+    await approvedUser("auth0|admin", "admin");
+
+    const pending = await as("auth0|admin").get("/admin/users?status=pending").expect(200);
+    expect(pending.body.users.map((u) => [u.id, u.status])).toEqual([["auth0|ana", "pending"]]);
+
+    const res = await as("auth0|admin")
+      .patch("/admin/users/auth0|ana")
+      .send({ role: "volunteer", status: "approved" })
+      .expect(200);
+    expect(res.body.user).toMatchObject({ role: "volunteer", status: "approved" });
+    await as("auth0|ana").get("/activities").expect(200);
+
+    await as("auth0|admin").patch("/admin/users/auth0|ana").send({ status: "blocked" }).expect(200);
+    expect((await as("auth0|ana").get("/activities").expect(403)).body.code).toBe(
+      "account_blocked"
+    );
+  });
+
+  it("only admins can manage accounts, and not their own", async () => {
+    await approvedUser("auth0|ben", "participant");
+    await as("auth0|ben").get("/admin/users").expect(403);
+    await as("auth0|ben").patch("/admin/users/auth0|ana").send({ status: "approved" }).expect(403);
+
+    await approvedUser("auth0|admin", "admin");
+    const self = await as("auth0|admin")
+      .patch("/admin/users/auth0|admin")
+      .send({ role: "participant" })
+      .expect(409);
+    expect(self.body.code).toBe("cannot_change_self");
+    await as("auth0|admin").patch("/admin/users/auth0|nobody").send({ status: "approved" }).expect(404);
+    await as("auth0|admin").patch("/admin/users/auth0|ana").send({ role: "boss" }).expect(400);
+  });
+
+  it("makes the first admin from the command line", async () => {
+    expect(await makeAdmin("ANA@example.org")).toEqual([{ name: "Ana", email: "Ana@example.org" }]);
+    await as("auth0|ana").get("/admin/users").expect(200);
+    expect(await makeAdmin("nobody@example.org")).toEqual([]);
   });
 });
 
@@ -46,25 +104,28 @@ describe("profile", () => {
       photo_url: null,
       birth_year: 1990,
       hobbies: "Pasear y leer",
+      role: "participant",
+      status: "pending",
     });
   });
 
   it("only accepts https photo URLs", async () => {
-    await as("auth0|ana")
-      .patch("/users/me")
-      .send({ photo_url: "javascript:alert(1)" })
-      .expect(400);
+    await as("auth0|ana").patch("/users/me").send({ photo_url: "javascript:alert(1)" }).expect(400);
   });
 
-  it("deletes the account and everything that belongs to it", async () => {
-    const activity = await createActivity("auth0|ana");
-    await as("auth0|ana").delete("/users/me").expect(204);
+  it("deletes the account and its sign-ups, but keeps activities an admin created", async () => {
+    await approvedUser("auth0|admin", "admin");
+    await approvedUser("auth0|ben", "participant");
+    const activity = await createActivity("auth0|admin");
+    await as("auth0|ben").put(`/activities/${activity.id}/registration`).expect(200);
 
-    await as("auth0|ana").get("/users/me").expect(403);
-    const { rowCount } = await pool.query("SELECT 1 FROM activities WHERE activity_id = $1", [
-      activity.id,
-    ]);
-    expect(rowCount).toBe(0);
+    await as("auth0|ben").delete("/users/me").expect(204);
+    await as("auth0|admin").delete("/users/me").expect(204);
+
+    const { rows } = await pool.query("SELECT created_by FROM activities");
+    expect(rows).toEqual([{ created_by: null }]);
+    const regs = await pool.query("SELECT count(*)::int AS n FROM registrations");
+    expect(regs.rows[0].n).toBe(0);
   });
 });
 
@@ -72,6 +133,7 @@ describe("access control", () => {
   it("rejects requests without a user", async () => {
     await request(app).get("/users/me").expect(401);
     await request(app).get("/activities").expect(401);
+    await request(app).get("/admin/users").expect(401);
   });
 
   it("asks unregistered users to create a profile first", async () => {
@@ -81,30 +143,5 @@ describe("access control", () => {
 
   it("has a public health check", async () => {
     await request(app).get("/health").expect(200, { status: "ok" });
-  });
-});
-
-describe("my activities", () => {
-  beforeEach(async () => {
-    await registerUser("auth0|ana");
-    await registerUser("auth0|ben");
-  });
-
-  it("lists activities I organise, attend and like", async () => {
-    const mine = await createActivity("auth0|ana", { title: "Mine" });
-    const bens = await createActivity("auth0|ben", { title: "Ben's" });
-    const other = await createActivity("auth0|ben", { title: "Liked" });
-
-    await as("auth0|ana").put(`/activities/${bens.id}/participants/me`).expect(200);
-    await as("auth0|ana").put(`/activities/${other.id}/interest`).expect(204);
-
-    const organiser = await as("auth0|ana").get("/users/me/activities?role=organiser");
-    expect(organiser.body.activities.map((a) => a.id)).toEqual([mine.id]);
-
-    const attending = await as("auth0|ana").get("/users/me/activities");
-    expect(attending.body.activities.map((a) => a.id).sort()).toEqual([mine.id, bens.id].sort());
-
-    const interests = await as("auth0|ana").get("/users/me/interests");
-    expect(interests.body.activities.map((a) => a.id)).toEqual([other.id]);
   });
 });

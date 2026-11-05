@@ -11,6 +11,9 @@ export const config = {
     .map((origin) => origin.trim())
     .filter(Boolean),
   trustProxy: env.TRUST_PROXY === "true",
+  // Per IP address. Members using the app together on the association's
+  // Wi-Fi share one address, so this is generous.
+  rateLimitPerMinute: Number(env.RATE_LIMIT_PER_MINUTE ?? 600),
   // Signs the temporary links used to show activity photos.
   imageUrlSecret: env.IMAGE_URL_SECRET,
   auth0: {
