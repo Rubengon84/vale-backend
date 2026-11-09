@@ -6,8 +6,7 @@ import {
   createActivity,
   daysFromNow,
   resetData,
-  validActivity,
-} from "./helpers.js";
+  validActivity, closeDatabase } from "./helpers.js";
 
 beforeEach(async () => {
   await resetData();
@@ -18,7 +17,7 @@ beforeEach(async () => {
   await approvedUser("auth0|vera", "volunteer", "Vera");
   await approvedUser("auth0|vito", "volunteer", "Vito");
 });
-afterAll(() => pool.end());
+afterAll(closeDatabase);
 
 const join = (userId, id) => as(userId).put(`/activities/${id}/registration`);
 const leave = (userId, id) => as(userId).delete(`/activities/${id}/registration`);

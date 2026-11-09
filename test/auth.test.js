@@ -1,11 +1,11 @@
 import { afterAll, describe, it } from "vitest";
 import request from "supertest";
 import { createApp } from "../src/app.js";
-import { pool } from "../src/db/pool.js";
+import { closeDatabase } from "./helpers.js";
 
 // Uses the real Auth0 middleware; these cases are rejected before any network call.
 const app = createApp();
-afterAll(() => pool.end());
+afterAll(closeDatabase);
 
 describe("Auth0 token check", () => {
   it("rejects requests without a token", async () => {

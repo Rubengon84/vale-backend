@@ -16,6 +16,15 @@ export const config = {
   rateLimitPerMinute: Number(env.RATE_LIMIT_PER_MINUTE ?? 600),
   // Signs the temporary links used to show activity photos.
   imageUrlSecret: env.IMAGE_URL_SECRET,
+  email: {
+    // Resend (resend.com). Without a key, emails are only logged.
+    resendApiKey: env.RESEND_API_KEY,
+    from: env.EMAIL_FROM ?? "VALE Conecta <onboarding@resend.dev>",
+  },
+  // The front end's address, for links in emails
+  appUrl: (env.APP_URL ?? "http://localhost:3000").replace(/\/$/, ""),
+  // Protects POST /internal/jobs (reminders, chat clean-up) for an external timer
+  cronSecret: env.CRON_SECRET,
   auth0: {
     domain: env.AUTH0_DOMAIN,
     audience: env.AUTH0_AUDIENCE,

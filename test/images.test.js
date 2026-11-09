@@ -3,7 +3,7 @@ import request from "supertest";
 import sharp from "sharp";
 import { pool } from "../src/db/pool.js";
 import { imagePath } from "../src/images.js";
-import { app, approvedUser, as, createActivity, resetData } from "./helpers.js";
+import { app, approvedUser, as, createActivity, resetData, closeDatabase } from "./helpers.js";
 
 beforeEach(async () => {
   await resetData();
@@ -11,7 +11,7 @@ beforeEach(async () => {
   await approvedUser("auth0|ana", "admin", "Ana");
   await approvedUser("auth0|ben", "participant", "Ben");
 });
-afterAll(() => pool.end());
+afterAll(closeDatabase);
 
 // A large phone-like JPEG carrying GPS data in its EXIF metadata.
 const phonePhoto = () =>
