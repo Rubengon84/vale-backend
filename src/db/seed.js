@@ -92,6 +92,13 @@ const ideas = [
   },
 ];
 
+const messages = [
+  ["community", "seed|pepe", "¡Hola! ¿Quién viene al cine? 🎬"],
+  ["community", "seed|lucia", "¡Yo voy! 😊"],
+  ["participants", "seed|maria", "¿Alguien quiere jugar al parchís el jueves?"],
+  ["volunteers", "seed|marcos", "Puedo llevar la furgoneta a la ruta del valle."],
+];
+
 export async function seed() {
   if (config.env === "production") {
     throw new Error("Refusing to seed the database in production");
@@ -99,13 +106,13 @@ export async function seed() {
 
   await withTransaction(async (client) => {
     await client.query(
-      "TRUNCATE users, activities, registrations, ideas RESTART IDENTITY CASCADE"
+      "TRUNCATE users, activities, registrations, ideas, chat_messages RESTART IDENTITY CASCADE"
     );
 
     for (const user of users) {
       await client.query(
-        `INSERT INTO users (user_id, name, role, status, hobbies)
-         VALUES ($1, $2, $3, 'approved', $4)`,
+        `INSERT INTO users (user_id, name, role, status, hobbies, chat_rules_accepted_at)
+         VALUES ($1, $2, $3, 'approved', $4, now())`,
         [user.id, user.name, user.role, user.hobbies ?? null]
       );
     }
@@ -143,6 +150,13 @@ export async function seed() {
     }
   });
   await withTransaction(async (client) => {
+    for (const [room, author, body] of messages) {
+      await client.query("INSERT INTO chat_messages (room, author_id, body) VALUES ($1, $2, $3)", [
+        room,
+        author,
+        body,
+      ]);
+    }
     for (const idea of ideas) {
       const { rows } = await client.query(
         `INSERT INTO ideas (author_id, title, description, suggested_when, status, response)

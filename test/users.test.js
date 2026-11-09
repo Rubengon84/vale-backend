@@ -2,10 +2,10 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
 import { pool } from "../src/db/pool.js";
 import { makeAdmin } from "../src/db/make-admin.js";
-import { app, approvedUser, as, createActivity, registerUser, resetData } from "./helpers.js";
+import { app, approvedUser, as, createActivity, registerUser, resetData, closeDatabase } from "./helpers.js";
 
 beforeEach(resetData);
-afterAll(() => pool.end());
+afterAll(closeDatabase);
 
 describe("PUT /users/me", () => {
   it("creates a pending participant on first login and keeps edits on later logins", async () => {
@@ -106,7 +106,14 @@ describe("profile", () => {
       hobbies: "Pasear y leer",
       role: "participant",
       status: "pending",
+      email_notifications: true,
+      chat_muted: false,
     });
+  });
+
+  it("lets people turn email notifications off", async () => {
+    const res = await as("auth0|ana").patch("/users/me").send({ email_notifications: false }).expect(200);
+    expect(res.body.user.email_notifications).toBe(false);
   });
 
   it("only accepts https photo URLs", async () => {

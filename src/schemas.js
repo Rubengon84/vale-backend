@@ -67,6 +67,7 @@ export const updateUserBody = z
     photo_url: photoUrl.nullable(),
     birth_year: z.coerce.number().int().min(1900).max(new Date().getFullYear()).nullable(),
     hobbies: z.string().trim().max(500).nullable(),
+    email_notifications: z.boolean(),
   })
   .partial()
   .refine((body) => Object.keys(body).length > 0, "Nothing to update");
@@ -81,6 +82,8 @@ export const adminUserUpdateBody = z
   .object({
     role: z.enum(ROLES),
     status: z.enum(["pending", "approved", "blocked"]),
+    // Pause (or un-pause) the person's chat messages
+    chat_muted: z.boolean(),
   })
   .partial()
   .refine((body) => Object.keys(body).length > 0, "Nothing to update");
@@ -113,3 +116,22 @@ export const reviewIdeaBody = z
   })
   .partial()
   .refine((body) => Object.keys(body).length > 0, "Nothing to update");
+
+// ---------- Chats ----------
+
+export const chatRoomParam = z.object({ room: z.string().max(30) });
+
+export const chatMessagesQuery = z.object({
+  after: z.coerce.number().int().min(0).optional(),
+  before: z.coerce.number().int().positive().optional(),
+});
+
+export const chatMessageBody = z.object({ body: text(1000) });
+
+export const chatReportBody = z.object({ reason: optionalText(500) });
+
+export const chatReportsQuery = z.object({
+  status: z.enum(["open", "all"]).default("open"),
+});
+
+export const chatMessageUpdateBody = z.object({ hidden: z.boolean() });

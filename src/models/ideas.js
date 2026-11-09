@@ -1,6 +1,8 @@
 import { query, withTransaction } from "../db/pool.js";
 import { HttpError, forbidden, notFound } from "../errors.js";
 import { signedImagePath } from "../images.js";
+import { inBackground } from "../background.js";
+import { notifyIdeaReviewed } from "../notifications.js";
 
 // Columns returned for every idea. $1 is always the current user's id.
 const IDEA_SELECT = `
@@ -145,13 +147,16 @@ export async function setInterest(user, ideaId, interested) {
 // The team's review: status, a reply for the author and, optionally, the
 // activity that came out of the idea.
 export async function reviewIdea(admin, ideaId, changes) {
-  return withTransaction(async (db) => {
-    const { rowCount } = await db.query("SELECT 1 FROM ideas WHERE idea_id = $1 FOR UPDATE", [
-      ideaId,
-    ]);
-    if (rowCount === 0) {
+  let before;
+  const result = await withTransaction(async (db) => {
+    const { rows } = await db.query(
+      "SELECT status, response FROM ideas WHERE idea_id = $1 FOR UPDATE",
+      [ideaId]
+    );
+    if (rows.length === 0) {
       throw notFound("Idea");
     }
+    before = rows[0];
     if (changes.activity_id) {
       const { rowCount: activityExists } = await db.query(
         "SELECT 1 FROM activities WHERE activity_id = $1",
@@ -173,6 +178,14 @@ export async function reviewIdea(admin, ideaId, changes) {
     );
     return getIdea(admin, ideaId, db);
   });
+  // Tell the author when the status or the reply changes.
+  if (
+    result.status !== "received" &&
+    (result.status !== before.status || (result.response ?? null) !== before.response)
+  ) {
+    inBackground(() => notifyIdeaReviewed(ideaId), "idea reply email");
+  }
+  return result;
 }
 
 // ---------- Photos ----------
